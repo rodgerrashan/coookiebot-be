@@ -1,0 +1,42 @@
+[
+  {
+    "name": "Bullish Engulfing",
+    "file": "bullishEngulfing",
+    "value": "BLLENG"
+  },
+  {
+    "name": "Bearish Engulfing",
+    "file": "bearishEngulfing",
+    "value": "BRSHENG"
+  },
+  {
+    "name": "Hammer",
+    "file": "hammer",
+    "value": "HMMR"
+  },
+  {
+    "name": "Shooting Star",
+    "file": "shootingStar",
+    "value": "SHTNGSTR"
+  },
+  {
+    "name": "Morning Evening Star",
+    "file": "morningEveningStar",
+    "value": "MESTR"
+  },
+  {
+    "name": "3 Candle Reversal",
+    "file": "threeCandleReversal",
+    "value": "3VRVRSL"
+  },
+  {
+    "name": "Institutional Reversal Trap",
+    "file": "institutionalReversalTrap",
+    "value": "INSRVVL"
+  },
+  {
+    "name": "Wick Body",
+    "file": "wickBodyPattern",
+    "value": "WICKBODY"
+  }
+]

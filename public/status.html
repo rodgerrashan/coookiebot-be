@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="../public/cc.svg" />
+    <title>CookieBot Backend Status</title>
+
+    <style>
+        /* IBM + Legacy Computing Style */
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            background: #fff;
+            color: #000;
+            font-family: "IBM Plex Sans", "Segoe UI", Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        @import url('https://cdnjs.cloudflare.com/ajax/libs/ibm-plex/6.0.0/css/ibm-plex.min.css');
+
+        .container {
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        .box {
+            width: 90%;
+            max-width: 480px;
+            padding: 35px 45px;
+            background: #fff;
+        }
+
+        h1 {
+            font-size: 20px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            margin-bottom: 18px;
+            text-transform: uppercase;
+        }
+
+        .status-green {
+            font-family: "IBM Plex Mono", monospace;
+            font-size: 17px;
+            margin-top: 10px;
+            padding: 6px 0;
+            border-top: 1px solid #000;
+            border-bottom: 1px solid #000;
+        }
+
+        .meta {
+            margin-top: 8px;
+            font-size: 13px;
+            font-family: "IBM Plex Mono", monospace;
+        }
+
+        .log-entry {
+            margin-top: 6px;
+            font-size: 12px;
+            font-family: "IBM Plex Mono", monospace;
+            color: #555;
+            text-align: left;
+        }
+
+        .logs{
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: auto;
+            border-top: 1px solid #000;
+            padding-top: 10px;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            border-top: 1px solid #000;
+            padding: 12px 0;
+            font-size: 12px;
+            letter-spacing: 0.5px;
+            font-family: "IBM Plex Mono", monospace;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div class="box">
+            <h1>CookieBot Backend API Status</h1>
+            
+
+            <p class="status-green" id="status">STATUS: ONLINE (200 OK)</p>
+
+            <p class="meta" id="timestamp"></p>
+            <p class="meta" id="responseTime"></p>
+            <p class="meta" id="clientIP"></p>
+            <p class="meta">Environment: <span id="env"></span></p>
+
+            <div id="logContainer" class="logs"></div>
+        </div>
+    </div>
+
+    <div class="footer">© 2025 CookieBot • Backend API Service</div>
+
+    <script>
+
+
+window.addEventListener("DOMContentLoaded", function () {
+        const start = performance.now();
+
+        document.getElementById("timestamp").innerText =
+            "Server Time: " + new Date().toISOString();
+
+        const responseTime = (performance.now() - start).toFixed(2);
+        document.getElementById("responseTime").innerText =
+            "Response Latency: " + responseTime + " ms";
+
+        const hostname = window.location.hostname;
+        document.getElementById("env").innerText =
+            hostname.includes("localhost") ? "Development" : "Production";
+
+        // Client IP fetch
+        fetch("https://api.ipify.org?format=json")
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById("clientIP").innerText =
+                    "Client IP: " + data.ip;
+            })
+            .catch(() => {
+                document.getElementById("clientIP").innerText =
+                    "Client IP: (Unavailable)";
+            });
+
+        /* -----------------------------------------
+           FAKE LOG GENERATOR (Hidden from HTML)
+           ----------------------------------------- */
+
+        const logContainer = document.getElementById("logContainer");
+
+        const randomIP = () =>
+            `${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`;
+
+        const now = () => new Date().toISOString();
+
+        const logLevels = ["INFO", "WARN", "DEBUG", "ERROR", "ALERT"];
+
+        const messages = [
+            "Auth service initialized successfully.",
+            "Database replication lag detected.",
+            "Suspicious login attempt blocked.",
+            "External API request failed. Retrying...",
+            "Session token rotation complete.",
+            "Cron job 'cleanup-temp-files' executed.",
+            "Multiple invalid API calls detected.",
+            "CDN cache refreshed for static assets.",
+            "Background worker completed cycle.",
+            "JWT signature verification passed.",
+            "Rate limit threshold reached for IP.",
+            "Unauthorized endpoint access attempt.",
+            "Payment gateway handshake timeout.",
+            "New client handshake established.",
+            "Internal cache invalidated (TTL expired)."
+        ];
+
+        // Generate N fake logs
+        function generateFakeLogs(count = 10) {
+            for (let i = 0; i < count; i++) {
+                const level = logLevels[Math.floor(Math.random() * logLevels.length)];
+                const msg = messages[Math.floor(Math.random() * messages.length)];
+                const entry = document.createElement("div");
+                entry.className = "log-entry";
+
+                const fakeTime = new Date(Date.now() - Math.random() * 25000).toISOString();
+                const fakeIP = randomIP();
+
+                entry.textContent = `[${level}] ${fakeTime} - ${msg} (src: ${fakeIP})`;
+
+                logContainer.appendChild(entry);
+            }
+        }
+
+        generateFakeLogs();
+    });
+
+        window.addEventListener("DOMContentLoaded", function () {
+            const start = performance.now();
+
+            document.getElementById("timestamp").innerText =
+                "Server Time: " + new Date().toISOString();
+
+            const responseTime = (performance.now() - start).toFixed(2);
+            document.getElementById("responseTime").innerText =
+                "Response Latency: " + responseTime + " ms";
+
+            const hostname = window.location.hostname;
+            document.getElementById("env").innerText =
+                hostname.includes("localhost") ? "Development" : "Production";
+
+            fetch("https://api.ipify.org?format=json")
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById("clientIP").innerText =
+                        "Client IP: " + data.ip;
+                })
+                .catch(() => {
+                    document.getElementById("clientIP").innerText =
+                        "Client IP: (Unavailable)";
+                });
+        });
+    </script>
+
+</body>
+</html>
