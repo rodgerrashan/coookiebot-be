@@ -6,6 +6,7 @@ const shootingStar = require('./shootingStar');
 const threeCandleReversal = require('./threeCandleReversal');
 const wickBodyPattern = require('./wickBodyPattern');
 const institutionalReversalTrap = require('./institutionalReversalTrap');
+const utBotPattern = require('./utBotPattern');
 const logger = require('../../utils/logger');
 
 
@@ -58,6 +59,8 @@ function runPattern(patternName, candles) {
       return institutionalReversalTrap(candles);
     case 'WICKBODY':
       return wickBodyPattern(candles);
+    case 'UTBOT':
+      return utBotPattern(candles);
     default:
       return shootingStar(candles);
 

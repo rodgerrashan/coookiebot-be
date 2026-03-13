@@ -38,5 +38,10 @@
     "name": "Wick Body",
     "file": "wickBodyPattern",
     "value": "WICKBODY"
+  },
+  {
+    "name": "UT Bot",
+    "file": "utBotPattern",
+    "value": "UTBOT"
   }
 ]
