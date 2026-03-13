@@ -27,7 +27,7 @@ exports.getPlatforms = async (req, res) => {
 // POST: Get symbols from Deriv and send
 exports.getSymbols = async (req, res) => {
   try {
-    const { platform } = req.body;
+    const { platform, market, search } = req.body;
 
     if (!platform) {
       return res.status(400).json({
@@ -51,17 +51,58 @@ exports.getSymbols = async (req, res) => {
     if (platform === "DRV") {
       symbols = await getSymbolsDeriv();
 
-      // Optionally filter only volatility indices
-      symbols = symbols.filter(
-        (s) =>
-          s.market === "synthetic_index" &&
-          s.display_name.toLowerCase().includes("volatility")
-      );
+      if (market && market !== "all") {
+        symbols = symbols.filter((s) => s.market === market);
+      }
+
+      if (search && String(search).trim()) {
+        const query = String(search).trim().toLowerCase();
+        symbols = symbols.filter(
+          (s) =>
+            s.display_name?.toLowerCase().includes(query) ||
+            s.symbol?.toLowerCase().includes(query)
+        );
+      }
+
+      symbols = symbols.sort((a, b) => {
+        if (a.market !== b.market) return a.market.localeCompare(b.market);
+        if (a.submarket !== b.submarket) return a.submarket.localeCompare(b.submarket);
+        return a.display_name.localeCompare(b.display_name);
+      });
     }
+
+    const marketMap = new Map();
+    symbols.forEach((s) => {
+      if (!marketMap.has(s.market)) {
+        marketMap.set(s.market, {
+          value: s.market,
+          name: s.market,
+          count: 0,
+          submarkets: new Set(),
+        });
+      }
+
+      const current = marketMap.get(s.market);
+      current.count += 1;
+      if (s.submarket) current.submarkets.add(s.submarket);
+    });
+
+    const markets = [
+      { value: "all", name: "All Markets", count: symbols.length, submarkets: [] },
+      ...Array.from(marketMap.values())
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((m) => ({
+          value: m.value,
+          name: m.name,
+          count: m.count,
+          submarkets: Array.from(m.submarkets).sort(),
+        })),
+    ];
 
     return res.status(200).json({
       success: true,
       symbols,
+      markets,
     });
   } catch (error) {
     logger.error("Error fetching symbols:", error);
