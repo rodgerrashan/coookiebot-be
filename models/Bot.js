@@ -28,6 +28,11 @@ const BotSchema = new mongoose.Schema({
 
     // Operational
     cooldownPeriod: { type: Number, default: 0 },    // In seconds
+    signalConflictMode: {
+        type: String,
+        enum: ['allow_parallel', 'close_opposite_then_open'],
+        default: 'allow_parallel'
+    },
 
     // Status tracking
     status: {

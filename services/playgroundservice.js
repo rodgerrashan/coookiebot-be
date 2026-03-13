@@ -12,6 +12,13 @@ function calcPL(candleValue, entryValue, stake, leverage) {
   return parseFloat(pl.toFixed(2));
 }
 
+function calcSignedPL(signal, entryValue, exitValue, stake, leverage) {
+  if (!entryValue) return 0;
+  const direction = signal === "BUY" ? 1 : -1;
+  const raw = direction * ((exitValue - entryValue) / entryValue) * stake * leverage;
+  return Number(raw.toFixed(2));
+}
+
 // Modified version: supports MULTIPLE CONCURRENT TRADES (no blocking)
 // New trades can be opened at any time, even if other trades are already open
 // Existing trades are monitored independently
@@ -19,7 +26,14 @@ function calcPL(candleValue, entryValue, stake, leverage) {
 // ROI is now correctly signed for both BUY and SELL (original had a bug on SELL trades)
 // Uses signed PNL for totalProfit and ROI calculations (cleaner & correct for both directions)
 
-function simulateTrade(history, patternName, stake, leverage, initialBalance = 1000) {
+function simulateTrade(
+  history,
+  patternName,
+  stake,
+  leverage,
+  initialBalance = 1000,
+  signalConflictMode = "allow_parallel"
+) {
   if (!Array.isArray(history) || history.length === 0) {
     return {
       success: false,
@@ -132,6 +146,43 @@ function simulateTrade(history, patternName, stake, leverage, initialBalance = 1
 
     if (patternResult && patternResult.signal) {
       console.warn(`[SIGNAL] ${patternResult.signal} detected on candle ${i}`);
+
+      if (signalConflictMode === "close_opposite_then_open") {
+        const oppositeSignal = patternResult.signal === "BUY" ? "SELL" : "BUY";
+        const stillOpenTrades = [];
+
+        for (let trade of activeTrades) {
+          if (trade.signal !== oppositeSignal) {
+            stillOpenTrades.push(trade);
+            continue;
+          }
+
+          const signalExitPrice = patternResult.entryPrice || candle.close;
+          const pnl = calcSignedPL(trade.signal, trade.entryPrice, signalExitPrice, stake, leverage);
+          totalProfit += pnl;
+          currentBalance += pnl;
+
+          if (pnl > 0) {
+            numberOfWinTrades += 1;
+          }
+
+          const roi = stake ? Number((pnl / stake * 100).toFixed(2)) : 0;
+          trades.push({
+            type: trade.signal,
+            entryPrice: trade.entryPrice,
+            entryTime: trade.entryTime,
+            exitPrice: signalExitPrice,
+            exitTime: candle.epoch,
+            result: `Closed on opposite ${patternResult.signal} signal`,
+            profit: Number(pnl.toFixed(2)),
+            candleIndex: i,
+            leverage,
+            roi,
+          });
+        }
+
+        activeTrades = stillOpenTrades;
+      }
 
       if (patternResult.signal === "BUY") {
         numberOfBuyTrades += 1;

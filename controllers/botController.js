@@ -24,6 +24,7 @@ exports.createBot = async (req, res) => {
       botMode,
       investment,
       multiplier,
+      signalConflictMode,
     } = req.body;
 
     // ✅ Validate required fields
@@ -65,6 +66,7 @@ exports.createBot = async (req, res) => {
       investment,
       status: "created",
       multiplier,
+      signalConflictMode,
     });
 
     try {
@@ -112,9 +114,9 @@ exports.getBotById = async (req, res) => {
 
 
     // send bot data botMode, botName, cooldownPeriod, createdAt, investment, isTestMode,status,strategy, timeframe,tradingPair,updatedAt
-    const { _id, botMode, botName, cooldownPeriod, createdAt, investment, isTestMode, status, strategy, timeframe, tradingPair, updatedAt } = bot;
+    const { _id, botMode, botName, cooldownPeriod, createdAt, investment, isTestMode, signalConflictMode, status, strategy, timeframe, tradingPair, updatedAt } = bot;
 
-    res.status(200).json({ _id, botMode, botName, cooldownPeriod, createdAt, investment, isTestMode, status, strategy, timeframe, tradingPair, updatedAt, exchange });
+    res.status(200).json({ _id, botMode, botName, cooldownPeriod, createdAt, investment, isTestMode, signalConflictMode, status, strategy, timeframe, tradingPair, updatedAt, exchange });
   } catch (error) {
     res.status(500).json({ message: "Error fetching bot", error: error.message });
   }

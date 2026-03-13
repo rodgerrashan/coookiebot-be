@@ -170,7 +170,18 @@ exports.getAvailablePatterns = async (req, res) => {
 exports.getBacktestResults = async (req, res) => {
   try {
 
-    const { platform, symbol, timeframe, pattern, stake, multiplier, bot, startDate, endDate } = req.body;
+    const {
+      platform,
+      symbol,
+      timeframe,
+      pattern,
+      stake,
+      multiplier,
+      bot,
+      startDate,
+      endDate,
+      signalConflictMode,
+    } = req.body;
 
     if (!platform || !symbol || !pattern || !stake || !timeframe || !multiplier || !bot || !startDate || !endDate) {
       return res.status(400).json({
@@ -188,7 +199,14 @@ exports.getBacktestResults = async (req, res) => {
     const candles = await getCandleHistory(symbol, Number(timeframe), Number(startDate), Number(endDate));
 
     // Simulate trades
-    const tradeSimulateResults = simulateTrade(candles, pattern, stakeNum, leverageNum,);
+    const tradeSimulateResults = simulateTrade(
+      candles,
+      pattern,
+      stakeNum,
+      leverageNum,
+      1000,
+      signalConflictMode || "allow_parallel"
+    );
 
     // logger.debug("[RESULT]", tradeSimulateResults);
 

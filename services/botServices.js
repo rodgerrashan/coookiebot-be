@@ -1,5 +1,5 @@
 const { subscribeCandles } = require("./deriv/candlesService");
-const { placeTrade } = require("./deriv/tradeService");
+const { placeTrade, sellContract } = require("./deriv/tradeService");
 const logger = require("../utils/logger");
 const socketManager = require("./socketManager");
 
@@ -27,6 +27,7 @@ const Exchange = require("../models/Exchange");
 
 // Store running bots in memory
 const runningBots = new Map();
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Main Bot Runner
@@ -35,11 +36,12 @@ const runningBots = new Map();
  * @param {string} appId - your DERIV_APP_ID
  */
 const startBot = async (bot, token, isAfterRestarted = false) => {
+  const botKey = String(bot._id);
 
   let retries = 0;
   const MAX_RETRIES = 10;
 
-  if (runningBots.has(bot._id)) {
+  if (runningBots.has(botKey)) {
     logger.warn(`[BOT] Bot ${bot.botName} is already running`);
     return;
   }
@@ -76,6 +78,7 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
     try {
     let candleHistory = [];
     let activeTrades = [];
+    let isHandlingSignal = false;
 
     
     ws = await subscribeCandles(bot.tradingPair, bot.timeframe, token, bot._id, async (newCandle) => {
@@ -93,6 +96,12 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
       const patternResult = runPattern(bot.strategy, candleHistory);
 
       if (patternResult) {
+        if (isHandlingSignal) {
+          return;
+        }
+
+        isHandlingSignal = true;
+
         createTradeMarker(bot._id, patternResult.entryPrice, Date.now(), patternResult.takeProfit, patternResult.stopLoss, patternResult.signal);
          
         // Send web socket notification
@@ -111,6 +120,50 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
 
         // place a trade based on pattern
         try {
+          if (bot.signalConflictMode === "close_opposite_then_open") {
+            const oppositeDirection = patternResult.signal === "BUY" ? "SELL" : "BUY";
+            const openOppositeTrades = activeTrades.filter(
+              (trade) => trade.status === "open" && trade.direction === oppositeDirection
+            );
+
+            if (openOppositeTrades.length > 0) {
+              for (const trade of openOppositeTrades) {
+                try {
+                  await sellContract(token, bot._id, trade.contractId);
+                  trade.status = "closed";
+
+                  makelogbot(
+                    bot._id,
+                    "trade",
+                    `Closed ${oppositeDirection} position ${trade.contractId} before opening ${patternResult.signal}`
+                  );
+
+                  socketManager.publish(`bot-activity-logs-${bot._id}`, {
+                    logType: "info",
+                    actionRequired: false,
+                    botId: bot._id,
+                    message: `Closed opposite ${oppositeDirection} position before opening ${patternResult.signal}`,
+                    timestamp: new Date(),
+                  });
+                } catch (closeErr) {
+                  logger.error(
+                    `[BOT] ${bot.botName} failed closing opposite ${oppositeDirection} trade ${trade.contractId}: ${closeErr.message}`
+                  );
+                  makelogbot(bot._id, "error", `Failed closing opposite trade: ${closeErr.message}`);
+
+                  socketManager.publish(`bot-activity-logs-${bot._id}`, {
+                    logType: "error",
+                    actionRequired: false,
+                    botId: bot._id,
+                    message: `Failed closing opposite trade: ${closeErr.message}`,
+                    timestamp: new Date(),
+                  });
+
+                  return;
+                }
+              }
+            }
+          }
 
           const payload = {
             price: 10, // Max stake (example: $10)
@@ -134,6 +187,12 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
 
 
           const tradeResult = await placeTrade(token, bot._id, payload);
+          activeTrades.push({
+            contractId: tradeResult.contract_id,
+            direction: patternResult.signal,
+            status: "open",
+            openedAt: new Date(),
+          });
           logger.info(`[BOT] ${bot.botName} placed trade: ${JSON.stringify(tradeResult)}`);
         } catch (tradeErr) {
 
@@ -148,6 +207,8 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
           });
           console.log(tradeErr);
           logger.error(`[BOT] ${bot.botName} trade error: ${tradeErr.message}`);
+        } finally {
+          isHandlingSignal = false;
         }
       }
 
@@ -197,7 +258,7 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
 
       // If subscription succeeds, reset retries
       retries = 0;
-      runningBots.set(String(bot._id), { ws, candleHistory, activeTrades });
+      runningBots.set(botKey, { ws, candleHistory, activeTrades });
 
 
       return;
@@ -206,7 +267,7 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
 
   } catch (error) {
     retries += 1;
-    logger.warn(`[BOT] Subscription failed (${retries}/${MAX_RETRIES}): ${err.message}`);
+    logger.warn(`[BOT] Subscription failed (${retries}/${MAX_RETRIES}): ${error.message}`);
     await delay(2000 * retries); 
     makelogbot(bot._id, 'error', `Failed to subscribe candles: ${error.message}`);
     // Send web socket notification
@@ -259,7 +320,7 @@ const stopBot = (botId) => {
  * Get bot status
  */
 const getBotStatus = (botId) => {
-  return runningBots.has(botId) ? "running" : "stopped";
+  return runningBots.has(String(botId)) ? "running" : "stopped";
 };
 
 
