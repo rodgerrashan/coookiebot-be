@@ -33,6 +33,11 @@ const BotSchema = new mongoose.Schema({
         enum: ['allow_parallel', 'close_opposite_then_open'],
         default: 'allow_parallel'
     },
+    riskRewardRatio: {
+        type: String,
+        enum: ['1:1', '1:2', '1:3', '1:4'],
+        default: '1:2'
+    },
 
     // Status tracking
     status: {

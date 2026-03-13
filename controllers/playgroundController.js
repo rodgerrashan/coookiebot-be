@@ -181,6 +181,7 @@ exports.getBacktestResults = async (req, res) => {
       startDate,
       endDate,
       signalConflictMode,
+      riskRewardRatio,
     } = req.body;
 
     if (!platform || !symbol || !pattern || !stake || !timeframe || !multiplier || !bot || !startDate || !endDate) {
@@ -205,7 +206,8 @@ exports.getBacktestResults = async (req, res) => {
       stakeNum,
       leverageNum,
       1000,
-      signalConflictMode || "allow_parallel"
+      signalConflictMode || "allow_parallel",
+      riskRewardRatio || "1:2"
     );
 
     // logger.debug("[RESULT]", tradeSimulateResults);

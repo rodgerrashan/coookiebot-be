@@ -81,6 +81,22 @@ function didCrossunder(seriesA, seriesB) {
     return prevA >= prevB && currA < currB;
 }
 
+function getRewardMultiplier(riskRewardRatio) {
+    if (typeof riskRewardRatio === 'number' && Number.isFinite(riskRewardRatio) && riskRewardRatio > 0) {
+        return riskRewardRatio;
+    }
+
+    if (typeof riskRewardRatio === 'string') {
+        const match = riskRewardRatio.match(/^\s*1\s*:\s*(\d+(?:\.\d+)?)\s*$/);
+        if (match) {
+            const parsed = Number(match[1]);
+            if (Number.isFinite(parsed) && parsed > 0) return parsed;
+        }
+    }
+
+    return 2;
+}
+
 function evaluateUtBotSignal(candles, atrPeriod, keyValue) {
     if (!candles || candles.length < Math.max(atrPeriod + 2, 3)) return null;
 
@@ -104,8 +120,10 @@ function evaluateUtBotSignal(candles, atrPeriod, keyValue) {
  * Sell variant: key=2, ATR=1
  * Buy variant: key=2, ATR=300
  */
-function utBotPattern(candles) {
+function utBotPattern(candles, options = {}) {
     if (!candles || candles.length < 302) return null;
+
+    const rewardMultiplier = getRewardMultiplier(options.riskRewardRatio);
 
     const sellSetup = evaluateUtBotSignal(candles, 1, 2);
     const buySetup = evaluateUtBotSignal(candles, 300, 2);
@@ -118,26 +136,28 @@ function utBotPattern(candles) {
 
     if (sellSetup.sell) {
         const stopLoss = Math.max(last.high, sellSetup.trailingStop[sellSetup.trailingStop.length - 1]);
-        const takeProfit = entryPrice - Math.max((stopLoss - entryPrice) * 2, range);
+        const takeProfit = entryPrice - Math.max((stopLoss - entryPrice) * rewardMultiplier, range);
 
         return {
             signal: 'SELL',
             entryPrice: Number(entryPrice.toFixed(5)),
             stopLoss: Number(stopLoss.toFixed(5)),
             takeProfit: Number(takeProfit.toFixed(5)),
+            riskReward: `1:${rewardMultiplier}`,
             pattern: 'UTBOT'
         };
     }
 
     if (buySetup.buy) {
         const stopLoss = Math.min(last.low, buySetup.trailingStop[buySetup.trailingStop.length - 1]);
-        const takeProfit = entryPrice + Math.max((entryPrice - stopLoss) * 2, range);
+        const takeProfit = entryPrice + Math.max((entryPrice - stopLoss) * rewardMultiplier, range);
 
         return {
             signal: 'BUY',
             entryPrice: Number(entryPrice.toFixed(5)),
             stopLoss: Number(stopLoss.toFixed(5)),
             takeProfit: Number(takeProfit.toFixed(5)),
+            riskReward: `1:${rewardMultiplier}`,
             pattern: 'UTBOT'
         };
     }

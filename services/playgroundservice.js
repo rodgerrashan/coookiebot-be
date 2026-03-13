@@ -32,7 +32,8 @@ function simulateTrade(
   stake,
   leverage,
   initialBalance = 1000,
-  signalConflictMode = "allow_parallel"
+  signalConflictMode = "allow_parallel",
+  riskRewardRatio = "1:2"
 ) {
   if (!Array.isArray(history) || history.length === 0) {
     return {
@@ -137,7 +138,9 @@ function simulateTrade(
     });
 
     // === 2. Look for new pattern / new trade (can happen even if trades are open) ===
-    const patternResult = runPattern(patternName, history.slice(0, i + 1), stake, leverage);
+    const patternResult = runPattern(patternName, history.slice(0, i + 1), {
+      riskRewardRatio,
+    });
 
     if (patternResult) {
       // logger.warn("Candle: ", candle);

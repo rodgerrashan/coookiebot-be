@@ -25,6 +25,49 @@ function loadPatterns() {
 
 const allPatterns = loadPatterns();
 
+function parseRewardMultiplier(riskRewardRatio) {
+  if (typeof riskRewardRatio === 'number' && Number.isFinite(riskRewardRatio) && riskRewardRatio > 0) {
+    return riskRewardRatio;
+  }
+
+  if (typeof riskRewardRatio === 'string') {
+    const match = riskRewardRatio.match(/^\s*1\s*:\s*(\d+(?:\.\d+)?)\s*$/);
+    if (match) {
+      const parsed = Number(match[1]);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  }
+
+  return null;
+}
+
+function applyRiskRewardOverride(result, riskRewardRatio) {
+  if (!result) return result;
+
+  const rewardMultiplier = parseRewardMultiplier(riskRewardRatio);
+  if (!rewardMultiplier) return result;
+
+  const entryPrice = Number(result.entryPrice);
+  const stopLoss = Number(result.stopLoss);
+  const signal = result.signal;
+
+  if (!Number.isFinite(entryPrice) || !Number.isFinite(stopLoss)) return result;
+  if (signal !== 'BUY' && signal !== 'SELL') return result;
+
+  const riskDistance = Math.abs(entryPrice - stopLoss);
+  if (!Number.isFinite(riskDistance) || riskDistance <= 0) return result;
+
+  const takeProfit = signal === 'BUY'
+    ? entryPrice + (riskDistance * rewardMultiplier)
+    : entryPrice - (riskDistance * rewardMultiplier);
+
+  return {
+    ...result,
+    takeProfit: Number(takeProfit.toFixed(5)),
+    riskReward: `1:${rewardMultiplier}`,
+  };
+}
+
 function checkPatterns(candles) {
   for (const { name, fn } of allPatterns) {
     const result = fn(candles);
@@ -37,34 +80,48 @@ function checkPatterns(candles) {
 
 
 // need to switch based on pattern name with pattern return
-function runPattern(patternName, candles) {
+function runPattern(patternName, candles, options = {}) {
   if (!patternName || !candles) {
     return null;
   };
 
+  let result = null;
+
   switch (patternName) {
     case 'BLLENG':
-      return bullishEngulfing(candles);
+      result = bullishEngulfing(candles);
+      break;
     case 'HMMR':
-      return hammer(candles);
+      result = hammer(candles);
+      break;
     case 'BRSHENG':
-      return bearishEngulfing(candles);
+      result = bearishEngulfing(candles);
+      break;
     case 'SHTNGSTR':
-      return shootingStar(candles);
+      result = shootingStar(candles);
+      break;
     case 'MESTR':
-      return morningEveningStar(candles);
+      result = morningEveningStar(candles);
+      break;
     case '3VRVRSL':
-      return threeCandleReversal(candles);
+      result = threeCandleReversal(candles);
+      break;
     case 'INSRVVL':
-      return institutionalReversalTrap(candles);
+      result = institutionalReversalTrap(candles);
+      break;
     case 'WICKBODY':
-      return wickBodyPattern(candles);
+      result = wickBodyPattern(candles);
+      break;
     case 'UTBOT':
-      return utBotPattern(candles);
+      result = utBotPattern(candles, options);
+      break;
     default:
-      return shootingStar(candles);
+      result = shootingStar(candles);
+      break;
 
   }
+
+  return applyRiskRewardOverride(result, options.riskRewardRatio);
 
 }
 

@@ -93,7 +93,9 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
       // Check for patterns
       // const patternResult = checkPatterns(candleHistory);
 
-      const patternResult = runPattern(bot.strategy, candleHistory);
+      const patternResult = runPattern(bot.strategy, candleHistory, {
+        riskRewardRatio: bot.riskRewardRatio || '1:2',
+      });
 
       if (patternResult) {
         if (isHandlingSignal) {
