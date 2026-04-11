@@ -1,14 +1,22 @@
-const { getCandleHistory, getSymbolsDeriv, getMultipliersDeriv, getTimeframesDeriv } = require('../services/deriv/candlesService');
+const { getCandleHistory } = require('../services/deriv/candlesService');
 const { simulateTrade } = require("../services/playgroundservice");
 const { availablePatterns } = require("../services/patterns/index");
 const logger = require('../utils/logger');
+const { getExchangeProvider } = require('../services/exchanges/factory');
 
 
 const platforms = [
   { _id: 1, name: "Deriv", ava: true, code: "DRV" },
-  { _id: 2, name: "Binance", ava: false, code: "BNC" },
+  { _id: 2, name: "Binance", ava: true, code: "BNC" },
   { _id: 3, name: "MetaTrader", ava: false, code: "MTD" },
 ]
+
+function platformCodeToName(platformCode) {
+  const code = String(platformCode || '').toUpperCase();
+  if (code === 'DRV') return 'Deriv';
+  if (code === 'BNC') return 'Binance';
+  return null;
+}
 
 
 // Get Available platforms
@@ -36,40 +44,38 @@ exports.getSymbols = async (req, res) => {
       });
     }
 
-    if (platform != "DRV") {
-      return res.status(503).json({
+    const platformName = platformCodeToName(platform);
+    if (!platformName) {
+      return res.status(400).json({
         success: false,
-        message: "This feature is currently not available in development."
+        message: "Unsupported platform code",
       });
     }
 
     // Log for debugging
     logger.info(`Fetching symbols for platform: ${platform}`);
 
-    // Only call Deriv symbols if platform is 'Deriv'
-    let symbols = [];
-    if (platform === "DRV") {
-      symbols = await getSymbolsDeriv();
+    const provider = getExchangeProvider(platformName);
+    let symbols = await provider.fetchSymbols();
 
-      if (market && market !== "all") {
-        symbols = symbols.filter((s) => s.market === market);
-      }
-
-      if (search && String(search).trim()) {
-        const query = String(search).trim().toLowerCase();
-        symbols = symbols.filter(
-          (s) =>
-            s.display_name?.toLowerCase().includes(query) ||
-            s.symbol?.toLowerCase().includes(query)
-        );
-      }
-
-      symbols = symbols.sort((a, b) => {
-        if (a.market !== b.market) return a.market.localeCompare(b.market);
-        if (a.submarket !== b.submarket) return a.submarket.localeCompare(b.submarket);
-        return a.display_name.localeCompare(b.display_name);
-      });
+    if (market && market !== "all") {
+      symbols = symbols.filter((s) => s.market === market);
     }
+
+    if (search && String(search).trim()) {
+      const query = String(search).trim().toLowerCase();
+      symbols = symbols.filter(
+        (s) =>
+          s.display_name?.toLowerCase().includes(query) ||
+          s.symbol?.toLowerCase().includes(query)
+      );
+    }
+
+    symbols = symbols.sort((a, b) => {
+      if ((a.market || '') !== (b.market || '')) return (a.market || '').localeCompare(b.market || '');
+      if ((a.submarket || '') !== (b.submarket || '')) return (a.submarket || '').localeCompare(b.submarket || '');
+      return (a.display_name || '').localeCompare(b.display_name || '');
+    });
 
     const marketMap = new Map();
     symbols.forEach((s) => {
@@ -125,11 +131,16 @@ exports.getMultipliers = async (req, res) => {
       });
     }
 
-    const multipliersData = await getMultipliersDeriv(symbol);
-    logger.debug("multipliers:", multipliersData);
+    const platformName = platformCodeToName(platform);
+    if (!platformName) {
+      return res.status(400).json({
+        success: false,
+        message: "Unsupported platform code",
+      });
+    }
 
-    // Transform into array of objects
-    const multipliersArray = multipliersData.multipliers.map((m) => ({ value: m }));
+    const provider = getExchangeProvider(platformName);
+    const multipliersArray = await provider.fetchLeverageOptions(symbol);
 
     return res.status(200).json({
       success: true,
@@ -184,7 +195,7 @@ exports.getBacktestResults = async (req, res) => {
       riskRewardRatio,
     } = req.body;
 
-    if (!platform || !symbol || !pattern || !stake || !timeframe || !multiplier || !bot || !startDate || !endDate) {
+    if (!platform || !symbol || !pattern || !stake || !timeframe || !bot || !startDate || !endDate) {
       return res.status(400).json({
         success: false,
         message: "Missing required parameters",
@@ -192,12 +203,23 @@ exports.getBacktestResults = async (req, res) => {
     }
 
     const stakeNum = Number(stake)
-    const leverageNum = Number(multiplier);
+    const leverageNum = Number(multiplier || 1);
+
+    const platformName = platformCodeToName(platform);
+    if (!platformName) {
+      return res.status(400).json({
+        success: false,
+        message: "Unsupported platform code",
+      });
+    }
+
+    const provider = getExchangeProvider(platformName);
 
     logger.info(`[INFO] Fetching historical candles for ${symbol}, timeframe: ${timeframe}`);
 
-    // Fetch candles
-    const candles = await getCandleHistory(symbol, Number(timeframe), Number(startDate), Number(endDate));
+    const candles = platformName === 'Deriv'
+      ? await getCandleHistory(symbol, Number(timeframe), Number(startDate), Number(endDate))
+      : await provider.fetchCandles(symbol, timeframe, startDate, endDate);
 
     // Simulate trades
     const tradeSimulateResults = simulateTrade(
@@ -244,8 +266,18 @@ exports.getCandleHistory = async (req, res) => {
 
     logger.info(`[INFO] Fetching historical candles for ${symbol}, granularity: ${timeframe}`);
 
-    // Call service layer
-    const candles = await getCandleHistory(symbol, Number(timeframe), Number(startDate), Number(endDate));
+    const platformName = platformCodeToName(platform);
+    if (!platformName) {
+      return res.status(400).json({
+        success: false,
+        message: "Unsupported platform code",
+      });
+    }
+
+    const provider = getExchangeProvider(platformName);
+    const candles = platformName === 'Deriv'
+      ? await getCandleHistory(symbol, Number(timeframe), Number(startDate), Number(endDate))
+      : await provider.fetchCandles(symbol, timeframe, startDate, endDate);
 
     // Success response
     return res.status(200).json({

@@ -7,6 +7,17 @@ const CONFIG = {
   slPoints: 10
 };
 
+function getCandleTime(candle) {
+  const rawTime = candle?.epoch ?? candle?.open_time ?? candle?.time;
+  const numericTime = Number(rawTime);
+
+  if (Number.isNaN(numericTime)) {
+    return null;
+  }
+
+  return numericTime > 10000000000 ? Math.floor(numericTime / 1000) : Math.floor(numericTime);
+}
+
 function calcPL(candleValue, entryValue, stake, leverage) {
   const pl = Math.abs(candleValue - entryValue) / entryValue * stake * leverage;
   return parseFloat(pl.toFixed(2));
@@ -54,6 +65,7 @@ function simulateTrade(
 
   for (let i = 1; i < history.length; i++) {
     const candle = history[i];
+    const candleTime = getCandleTime(candle);
 
     // === 1. Check all existing active trades for TP/SL (before looking for new signals) ===
     let newActiveTrades = [];
@@ -119,7 +131,7 @@ function simulateTrade(
           entryPrice: trade.entryPrice,
           entryTime: trade.entryTime,
           exitPrice,
-          exitTime: candle.epoch,   // renamed for consistency with entryTime/exittime
+          exitTime: candleTime,
           result: hitType,
           profit: Number(pnl.toFixed(2)),
           candleIndex: i,
@@ -133,7 +145,7 @@ function simulateTrade(
 
     activeTrades = newActiveTrades;
     accountBalanceHistory.push({
-      time: candle.epoch,
+      time: candleTime,
       balance: parseFloat(currentBalance.toFixed(2))
     });
 
@@ -175,7 +187,7 @@ function simulateTrade(
             entryPrice: trade.entryPrice,
             entryTime: trade.entryTime,
             exitPrice: signalExitPrice,
-            exitTime: candle.epoch,
+            exitTime: candleTime,
             result: `Closed on opposite ${patternResult.signal} signal`,
             profit: Number(pnl.toFixed(2)),
             candleIndex: i,
@@ -196,7 +208,7 @@ function simulateTrade(
       activeTrades.push({
         ...patternResult,
         entryCandleIndex: i,
-        entryTime: candle.epoch
+        entryTime: candleTime
       });
     }
   }

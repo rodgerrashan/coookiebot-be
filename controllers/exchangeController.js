@@ -1,11 +1,8 @@
 const Exchange = require('../models/Exchange');
-const crypto = require('crypto');
-const WebSocket = require('ws');
 require('dotenv').config();
-const { encrypt, decrypt } = require('../utils/encryptions');
+const { encrypt } = require('../utils/encryptions');
 const logger = require('../utils/logger');
-const { connectDeriv } = require('../services/deriv/connect');
-const { connect } = require('http2');
+const { getExchangeProvider } = require('../services/exchanges/factory');
 
 
 
@@ -20,6 +17,7 @@ exports.getAllExchanges = async (req, res) => {
                 name: ex.name,
                 platform: ex.platform,
                 status: ex.status,
+                isTestnet: ex.isTestnet,
                 statusCheckedAt: ex.statusCheckedAt,
                 createdAt: ex.createdAt,
 
@@ -32,30 +30,45 @@ exports.getAllExchanges = async (req, res) => {
 };
 
 
-// --- POST: Create a new exchange connection (Deriv API token) ---
 exports.createExchange = async (req, res) => {
-    // platform, name, apiSecret
-    const { platform, name, apiSecret } = req.body;
+    const { platform, name, apiSecret, apiKey, isTestnet = true } = req.body;
 
-    if (!platform || !name || !apiSecret) {
-        return res.status(400).json({ message: 'Platform, name, and Deriv token are required.' });
+    const normalizedPlatform = String(platform || '').trim();
+    const isDeriv = normalizedPlatform.toLowerCase() === 'deriv';
+    const isBinance = normalizedPlatform.toLowerCase() === 'binance';
+
+    if (!normalizedPlatform || !name) {
+        return res.status(400).json({ message: 'Platform and name are required.' });
+    }
+
+    if (isDeriv && !apiSecret) {
+        return res.status(400).json({ message: 'Deriv token is required.' });
+    }
+
+    if (isBinance && (!apiKey || !apiSecret)) {
+        return res.status(400).json({ message: 'Binance API key and API secret are required.' });
     }
 
     try {
-        // Encrypt token
-        const encryptedToken = encrypt(apiSecret);
-        // Step 1 — Test Deriv connection before saving
-        const testConnection = await testDerivToken(encryptedToken);
-        if (!testConnection.success) {
-            return res.status(400).json({ message: 'Invalid Deriv token. Connection failed.' });
-        }
+        const provider = getExchangeProvider(normalizedPlatform);
+        const encryptedToken = isDeriv ? encrypt(apiSecret) : null;
+        const encryptedKey = isBinance ? encrypt(apiKey) : null;
+        const encryptedSecret = isBinance ? encrypt(apiSecret) : null;
 
+        await provider.validateCredentials({
+            apiToken: encryptedToken,
+            apiKey: encryptedKey,
+            apiSecret: encryptedSecret,
+            isTestnet: Boolean(isTestnet),
+        });
 
-        // Step 2 — Encrypt and save
         const newExchange = new Exchange({
-            platform,
+            platform: normalizedPlatform,
             name,
             apiToken: encryptedToken,
+            apiKey: encryptedKey,
+            apiSecret: encryptedSecret,
+            isTestnet: Boolean(isTestnet),
             status: 'Connected',
             statusCheckedAt: new Date(),
         });
@@ -63,18 +76,20 @@ exports.createExchange = async (req, res) => {
         const savedExchange = await newExchange.save();
 
         res.status(201).json({
-            message: 'Deriv account connected successfully!',
+            message: `${normalizedPlatform} account connected successfully!`,
             exchange: {
                 _id: savedExchange._id,
                 platform: savedExchange.platform,
                 name: savedExchange.name,
                 status: savedExchange.status,
+                isTestnet: savedExchange.isTestnet,
             }
         });
 
     } catch (error) {
         logger.error('[ERROR] Error creating exchange:', error);
-        res.status(500).json({ message: 'Error saving exchange', error: error.message });
+        const statusCode = String(error.message || '').includes('Unsupported exchange platform') ? 400 : 500;
+        res.status(statusCode).json({ message: 'Error saving exchange', error: error.message });
     }
 };
 
@@ -104,26 +119,34 @@ exports.checkExchangeStatus = async (req, res) => {
             return res.status(404).json({ message: 'Exchange not found.' });
         }
 
-        logger.info(`[INFO] Checking Deriv connection for exchange: ${exchange.name}`);
+        logger.info(`[INFO] Checking connection for exchange: ${exchange.name}`);
 
-        // const token = decrypt(exchange.apiToken);
-        const testConnection = await testDerivToken(exchange.apiToken);
-        console.log('Test connection result:', testConnection);
+        const provider = getExchangeProvider(exchange.platform);
+        await provider.validateCredentials({
+            apiToken: exchange.apiToken,
+            apiKey: exchange.apiKey,
+            apiSecret: exchange.apiSecret,
+            isTestnet: exchange.isTestnet,
+        });
 
-        if (testConnection.success) {
-            exchange.status = 'Connected';
-            exchange.statusCheckedAt = new Date();
-            await exchange.save();
-            res.status(200).json({ status: 'ok', message: 'Deriv connection active.' });
-        } else {
-            exchange.status = 'Disconnected';
-            exchange.statusCheckedAt = new Date();
-            await exchange.save();
-            res.status(400).json({ status: 'error', message: 'Deriv connection failed.' });
-        }
+        exchange.status = 'Connected';
+        exchange.statusCheckedAt = new Date();
+        await exchange.save();
+        return res.status(200).json({ status: 'ok', message: `${exchange.platform} connection active.` });
     } catch (error) {
-        logger.error('[ERROR] Checking Deriv connection:', error);
-        res.status(500).json({ status: 'error', message: 'Failed to verify Deriv connection.' });
+        try {
+            const exchange = await Exchange.findById(req.params.id);
+            if (exchange) {
+                exchange.status = 'Disconnected';
+                exchange.statusCheckedAt = new Date();
+                await exchange.save();
+            }
+        } catch (saveError) {
+            logger.error('[ERROR] Failed updating exchange status after failed check:', saveError);
+        }
+
+        logger.error('[ERROR] Checking exchange connection:', error);
+        res.status(400).json({ status: 'error', message: error.message || 'Failed to verify exchange connection.' });
     }
 };
 
@@ -142,24 +165,4 @@ exports.getExchangeById = async (req, res) => {
         res.status(500).json({ message: 'Error fetching exchange', error: error.message });
     }
 };
-
-async function testDerivToken(token) {
-    try {
-        const result = await connectDeriv(token);
-        result.socket.close();
-
-        return {
-            success: true,
-            loginid: result.loginid,
-            message: "Token valid"
-        };
-
-    } catch (err) {
-        console.error('Error testing Deriv token:', err);
-        return {
-            success: false,
-            error: err.message || "Invalid or expired token"
-        };
-    }
-}
 

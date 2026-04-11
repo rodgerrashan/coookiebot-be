@@ -43,5 +43,15 @@
     "name": "UT Bot",
     "file": "utBotPattern",
     "value": "UTBOT"
+  },
+  {
+    "name": "Trend Following",
+    "file": "trendStrategy",
+    "value": "TREND_FOLLOWING"
+  },
+  {
+    "name": "Mean Reversion",
+    "file": "meanReversion",
+    "value": "MEAN_REVERSION"
   }
 ]

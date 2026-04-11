@@ -5,8 +5,8 @@ const Candle = require('../models/Candle');
 const TradingMarker = require('../models/TradingMarker');
 
 const User = require('../models/User');
-const { connectDeriv } = require('../services/deriv/connect');
 const logger = require('../utils/logger');
+const { getExchangeProvider } = require('../services/exchanges/factory');
 
 const { startBot, stopBot } = require('../services/botServices')
 const { makelogbot } = require('../services/logsBotsServices');
@@ -24,8 +24,14 @@ exports.createBot = async (req, res) => {
       botMode,
       investment,
       multiplier,
+      marketType,
+      orderType,
+      leverage,
+      marginMode,
+      positionSide,
       signalConflictMode,
       riskRewardRatio,
+      smartFeatures,
     } = req.body;
 
     // ✅ Validate required fields
@@ -42,16 +48,14 @@ exports.createBot = async (req, res) => {
       return res.status(404).json({ message: "Exchange not found." });
     }
 
-    // ✅ Optional: Verify Deriv connection if exchange.platform === 'Deriv'
-    if (exchangeRecord.platform.toLowerCase() === 'deriv' && exchangeRecord.derivToken) {
-      try {
-        await connectDeriv(exchangeRecord.derivToken);
-        logger.info(`[Deriv] Connection verified for ${exchangeRecord.name || 'Deriv Account'}`);
-      } catch (error) {
-        logger.error(`[Deriv] Invalid token for ${exchangeRecord.name}: ${error.message}`);
-        return res.status(400).json({ message: "Invalid Deriv token." });
-      }
-    }
+    const provider = getExchangeProvider(exchangeRecord.platform);
+    await provider.validateCredentials({
+      apiToken: exchangeRecord.apiToken,
+      apiKey: exchangeRecord.apiKey,
+      apiSecret: exchangeRecord.apiSecret,
+      isTestnet: exchangeRecord.isTestnet,
+      marketType: marketType || 'spot',
+    });
 
     const newBot = new Bot({
       botName,
@@ -66,9 +70,35 @@ exports.createBot = async (req, res) => {
       botMode,
       investment,
       status: "created",
-      multiplier,
+      multiplier: multiplier || 1,
+      marketType: marketType || 'spot',
+      orderType: orderType || 'MARKET',
+      leverage: leverage || 1,
+      marginMode: marginMode || 'CROSS',
+      positionSide: positionSide || 'BOTH',
       signalConflictMode,
       riskRewardRatio: riskRewardRatio || '1:2',
+      smartFeatures: {
+        riskEngine: {
+          enabled: Boolean(smartFeatures?.riskEngine?.enabled),
+          autoPositionSizing: Boolean(smartFeatures?.riskEngine?.autoPositionSizing),
+          riskPerTradePercent: Number(smartFeatures?.riskEngine?.riskPerTradePercent || 1),
+          maxDailyLossPercent: Number(smartFeatures?.riskEngine?.maxDailyLossPercent || 3),
+          stopAfterConsecutiveLosses: Number(smartFeatures?.riskEngine?.stopAfterConsecutiveLosses || 3),
+        },
+        marketDetection: {
+          enabled: Boolean(smartFeatures?.marketDetection?.enabled),
+          autoSwitch: Boolean(smartFeatures?.marketDetection?.autoSwitch),
+          switchCooldownCandles: Number(smartFeatures?.marketDetection?.switchCooldownCandles || 5),
+          trendStrategy: smartFeatures?.marketDetection?.trendStrategy || 'TREND_FOLLOWING',
+          sidewaysStrategy: smartFeatures?.marketDetection?.sidewaysStrategy || 'GRID_RANGE',
+        },
+        volatilityFilter: {
+          enabled: Boolean(smartFeatures?.volatilityFilter?.enabled),
+          atrPeriod: Number(smartFeatures?.volatilityFilter?.atrPeriod || 14),
+          atrSpikeMultiplier: Number(smartFeatures?.volatilityFilter?.atrSpikeMultiplier || 2.5),
+        },
+      },
     });
 
     try {
@@ -116,9 +146,44 @@ exports.getBotById = async (req, res) => {
 
 
     // send bot data botMode, botName, cooldownPeriod, createdAt, investment, isTestMode,status,strategy, timeframe,tradingPair,updatedAt
-    const { _id, botMode, botName, cooldownPeriod, createdAt, investment, isTestMode, signalConflictMode, riskRewardRatio, status, strategy, timeframe, tradingPair, updatedAt } = bot;
+    const {
+      _id,
+      botMode,
+      botName,
+      cooldownPeriod,
+      createdAt,
+      investment,
+      isTestMode,
+      signalConflictMode,
+      riskRewardRatio,
+      status,
+      strategy,
+      timeframe,
+      tradingPair,
+      updatedAt,
+      smartFeatures,
+      runtimeState,
+    } = bot;
 
-    res.status(200).json({ _id, botMode, botName, cooldownPeriod, createdAt, investment, isTestMode, signalConflictMode, riskRewardRatio, status, strategy, timeframe, tradingPair, updatedAt, exchange });
+    res.status(200).json({
+      _id,
+      botMode,
+      botName,
+      cooldownPeriod,
+      createdAt,
+      investment,
+      isTestMode,
+      signalConflictMode,
+      riskRewardRatio,
+      status,
+      strategy,
+      timeframe,
+      tradingPair,
+      updatedAt,
+      exchange,
+      smartFeatures,
+      runtimeState,
+    });
   } catch (error) {
     res.status(500).json({ message: "Error fetching bot", error: error.message });
   }
@@ -161,16 +226,21 @@ exports.deleteBot = async (req, res) => {
 exports.startBot = async (req, res) => {
   try {
     const bot = await Bot.findById(req.params.id);
-    const exchange = await Exchange.findById(bot.exchange._id.toString());
-
-    // console.log("Fetched exchange for bot start:", exchange);
-
     if (!bot) return res.status(404).json({ message: "Bot not found" });
+
+    const exchange = await Exchange.findById(bot.exchange._id.toString());
+    if (!exchange) return res.status(404).json({ message: "Exchange not found" });
+
+    if (exchange.platform.toLowerCase() !== 'deriv') {
+      return res.status(400).json({
+        message: `${exchange.platform} bot runtime is still in progress. Connection and market data are already enabled.`,
+      });
+    }
 
     bot.status = "active";
     await bot.save();
 
-    startBot(bot, exchange.apiToken);
+    startBot(bot, exchange);
 
     logger.warn(`[BOT STARTED] ${bot.botName} (${bot._id})`);
     res.status(200).json({ message: "Bot started successfully", bot });

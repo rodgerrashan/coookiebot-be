@@ -1,7 +1,6 @@
-const { subscribeCandles } = require("./deriv/candlesService");
-const { placeTrade, sellContract } = require("./deriv/tradeService");
 const logger = require("../utils/logger");
 const socketManager = require("./socketManager");
+const { getExchangeProvider } = require("./exchanges/factory");
 
 require('dotenv').config();
 
@@ -17,11 +16,17 @@ const { calcPL } = require("../services/playgroundservice");
 
 // create trade log in bot
 const { createTradeMarker } = require("../services/tradeMarkersServices");
+const { evaluateTradingRisk, calculatePositionSize } = require("../services/riskEngine");
+const { detectMarketRegime } = require("../services/marketRegime");
+const { shouldBlockByVolatility } = require("../services/volatilityFilter");
+const { resolveActiveStrategy } = require("../services/strategySwitchCoordinator");
+const { runGridBot } = require("../services/gridBotEngine");
 
 const Candle = require("../models/Candle");
 const mongoose = require("mongoose");
 const Bot = require("../models/Bot");
 const Exchange = require("../models/Exchange");
+const TradingMarker = require("../models/TradingMarker");
 
 
 
@@ -29,13 +34,61 @@ const Exchange = require("../models/Exchange");
 const runningBots = new Map();
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function buildRuntimeState(bot) {
+  return {
+    currentRegime: bot?.runtimeState?.currentRegime || 'UNKNOWN',
+    currentStrategy: bot?.runtimeState?.currentStrategy || bot?.strategy,
+    tradingPaused: Boolean(bot?.runtimeState?.tradingPaused),
+    pauseReason: bot?.runtimeState?.pauseReason || '',
+    consecutiveLosses: Number(bot?.runtimeState?.consecutiveLosses || 0),
+    dayPnLPercent: Number(bot?.runtimeState?.dayPnLPercent || 0),
+    lastSwitchAt: bot?.runtimeState?.lastSwitchAt || null,
+    candlesSinceSwitch: 0,
+  };
+}
+
+async function hydrateRuntimeRiskState(botId, runtimeState) {
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const closedTrades = await TradingMarker.find({
+    botId,
+    status: 'closed',
+    updatedAt: { $gte: startOfDay },
+  })
+    .sort({ updatedAt: -1 })
+    .limit(100)
+    .lean();
+
+  let dayPnLPercent = 0;
+  let consecutiveLosses = 0;
+
+  for (const trade of closedTrades) {
+    dayPnLPercent += Number(trade.pnlPercent || 0);
+  }
+
+  for (const trade of closedTrades) {
+    if (Number(trade.realizedPnL || 0) < 0) {
+      consecutiveLosses += 1;
+    } else {
+      break;
+    }
+  }
+
+  return {
+    ...runtimeState,
+    dayPnLPercent: Number(dayPnLPercent.toFixed(4)),
+    consecutiveLosses,
+  };
+}
+
 /**
  * Main Bot Runner
  * @param {Object} bot - bot object from DB
- * @param {string} token - user Deriv API token
+ * @param {Object|string} exchangeConfig - exchange document or encrypted token (legacy)
  * @param {string} appId - your DERIV_APP_ID
  */
-const startBot = async (bot, token, isAfterRestarted = false) => {
+const startBot = async (bot, exchangeConfig, isAfterRestarted = false) => {
   const botKey = String(bot._id);
 
   let retries = 0;
@@ -44,6 +97,19 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
   if (runningBots.has(botKey)) {
     logger.warn(`[BOT] Bot ${bot.botName} is already running`);
     return;
+  }
+
+  const resolvedExchange = typeof exchangeConfig === 'string'
+    ? { platform: bot.exchange.platform, apiToken: exchangeConfig }
+    : exchangeConfig;
+
+  const provider = getExchangeProvider(resolvedExchange?.platform || bot.exchange.platform);
+  const supportsRuntime = typeof provider.subscribeMarketData === 'function'
+    && typeof provider.createOrder === 'function'
+    && typeof provider.closeOrder === 'function';
+
+  if (!supportsRuntime) {
+    throw new Error(`${resolvedExchange?.platform || bot.exchange.platform} runtime trading is not implemented yet`);
   }
 
   logger.info(`[BOT] Starting bot: ${bot.botName} (${bot._id})`);
@@ -79,9 +145,18 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
     let candleHistory = [];
     let activeTrades = [];
     let isHandlingSignal = false;
+    let runtimeState = await hydrateRuntimeRiskState(bot._id, buildRuntimeState(bot));
 
     
-    ws = await subscribeCandles(bot.tradingPair, bot.timeframe, token, bot._id, async (newCandle) => {
+    ws = await provider.subscribeMarketData({
+      symbol: bot.tradingPair,
+      timeframe: bot.timeframe,
+      apiToken: resolvedExchange.apiToken,
+      apiKey: resolvedExchange.apiKey,
+      apiSecret: resolvedExchange.apiSecret,
+      isTestnet: resolvedExchange.isTestnet,
+      botId: bot._id,
+      onCandle: async (newCandle) => {
 
       // update the candle history
       candleHistory.push(newCandle);
@@ -90,12 +165,82 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
         candleHistory.shift();
       }
 
-      // Check for patterns
-      // const patternResult = checkPatterns(candleHistory);
+      const regimeResult = detectMarketRegime(candleHistory);
+      runtimeState.currentRegime = regimeResult.regime;
 
-      const patternResult = runPattern(bot.strategy, candleHistory, {
-        riskRewardRatio: bot.riskRewardRatio || '1:2',
-      });
+      const switchResult = resolveActiveStrategy(bot, runtimeState, regimeResult.regime);
+      runtimeState = switchResult.updatedState;
+
+      if (switchResult.switched) {
+        makelogbot(bot._id, 'info', switchResult.switchReason);
+        socketManager.publish(`bot-activity-logs-${bot._id}`, {
+          logType: 'info',
+          actionRequired: false,
+          botId: bot._id,
+          message: switchResult.switchReason,
+          timestamp: new Date(),
+        });
+      }
+
+      const riskStatus = evaluateTradingRisk(bot, runtimeState);
+      if (!riskStatus.allowTrade) {
+        runtimeState.tradingPaused = true;
+        runtimeState.pauseReason = riskStatus.reason;
+        runtimeState.lastPauseAt = new Date();
+
+        await Bot.findByIdAndUpdate(bot._id, {
+          status: 'paused',
+          runtimeState,
+        });
+
+        makelogbot(bot._id, 'warning', riskStatus.reason);
+        socketManager.publish(`bot-activity-logs-${bot._id}`, {
+          logType: 'warning',
+          actionRequired: true,
+          botId: bot._id,
+          message: riskStatus.reason,
+          timestamp: new Date(),
+        });
+        return;
+      }
+
+      runtimeState.tradingPaused = false;
+      runtimeState.pauseReason = '';
+
+      const volatilityDecision = shouldBlockByVolatility(
+        candleHistory,
+        bot?.smartFeatures?.volatilityFilter || {}
+      );
+
+      if (volatilityDecision.blocked) {
+        makelogbot(bot._id, 'info', volatilityDecision.reason);
+        socketManager.publish(`bot-activity-logs-${bot._id}`, {
+          logType: 'info',
+          actionRequired: false,
+          botId: bot._id,
+          message: volatilityDecision.reason,
+          timestamp: new Date(),
+        });
+        return;
+      }
+
+      const activeStrategy = switchResult.strategy || bot.strategy;
+      runtimeState.currentStrategy = activeStrategy;
+
+      let patternResult = null;
+      const isGridMode = ['grid', 'grid trading'].includes(String(bot.botMode || '').toLowerCase())
+        || activeStrategy === 'GRID_RANGE';
+
+      if (isGridMode) {
+        patternResult = runGridBot(candleHistory, {
+          rewardMultiplier: 1.4,
+          gridSpacingPercent: 0.4,
+        });
+      } else {
+        patternResult = runPattern(activeStrategy, candleHistory, {
+          riskRewardRatio: bot.riskRewardRatio || '1:2',
+        });
+      }
 
       if (patternResult) {
         if (isHandlingSignal) {
@@ -104,7 +249,18 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
 
         isHandlingSignal = true;
 
-        createTradeMarker(bot._id, patternResult.entryPrice, Date.now(), patternResult.takeProfit, patternResult.stopLoss, patternResult.signal);
+        await createTradeMarker(
+          bot._id,
+          patternResult.entryPrice,
+          Date.now(),
+          patternResult.takeProfit,
+          patternResult.stopLoss,
+          patternResult.signal,
+          {
+            strategy: runtimeState.currentStrategy,
+            marketRegime: runtimeState.currentRegime,
+          }
+        );
          
         // Send web socket notification
         socketManager.publish(`bot-activity-logs-${bot._id}`, {
@@ -131,7 +287,14 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
             if (openOppositeTrades.length > 0) {
               for (const trade of openOppositeTrades) {
                 try {
-                  await sellContract(token, bot._id, trade.contractId);
+                  await provider.closeOrder({
+                    apiToken: resolvedExchange.apiToken,
+                    apiKey: resolvedExchange.apiKey,
+                    apiSecret: resolvedExchange.apiSecret,
+                    isTestnet: resolvedExchange.isTestnet,
+                    botId: bot._id,
+                    orderId: trade.contractId,
+                  });
                   trade.status = "closed";
 
                   makelogbot(
@@ -167,11 +330,15 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
             }
           }
 
+          const orderAmount = calculatePositionSize(bot, {
+            equityBase: Number(bot.investment || 0),
+          });
+
           const payload = {
             price: 10, // Max stake (example: $10)
             parameters: {
               "proposal": 1,
-              "amount": bot.investment,
+              "amount": orderAmount,
               "basis": "stake",
               "contract_type": patternResult.signal === "BUY" ? "MULTUP" : "MULTDOWN",                          
               "currency": "USD",
@@ -188,7 +355,14 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
 
 
 
-          const tradeResult = await placeTrade(token, bot._id, payload);
+          const tradeResult = await provider.createOrder({
+            apiToken: resolvedExchange.apiToken,
+            apiKey: resolvedExchange.apiKey,
+            apiSecret: resolvedExchange.apiSecret,
+            isTestnet: resolvedExchange.isTestnet,
+            botId: bot._id,
+            payload,
+          });
           activeTrades.push({
             contractId: tradeResult.contract_id,
             direction: patternResult.signal,
@@ -214,6 +388,10 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
         }
       }
 
+      await Bot.findByIdAndUpdate(bot._id, {
+        runtimeState,
+      });
+
       // Save new candle to DB or in-memory store as needed
       try {
         const candlePayload = {
@@ -237,6 +415,7 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
         // makelogbot(bot._id, 'error', `Failed to save candle: ${err.message}`);
       }
 
+      }
     });
 
     // WebSocket error handling
@@ -260,7 +439,7 @@ const startBot = async (bot, token, isAfterRestarted = false) => {
 
       // If subscription succeeds, reset retries
       retries = 0;
-      runningBots.set(botKey, { ws, candleHistory, activeTrades });
+      runningBots.set(botKey, { ws, candleHistory, activeTrades, runtimeState });
 
 
       return;
@@ -334,7 +513,11 @@ const startAllBots = async () => {
     for (const bot of bots) {
       const exchange = await Exchange.findById(bot.exchange._id.toString());
       if (exchange) {
-        startBot(bot, exchange.apiToken, true);
+        if (String(exchange.platform || '').toLowerCase() !== 'deriv') {
+          logger.warn(`[BOT] Skipping auto-start for ${bot.botName}: ${exchange.platform} runtime pending implementation`);
+          continue;
+        }
+        startBot(bot, exchange, true);
         logger.info(`[BOT] Restarted bot ${bot.botName} (${bot._id}) after server restart`);
       } else {
         logger.error(`[BOT] Exchange not found for bot ${bot.botName} (${bot._id})`);
