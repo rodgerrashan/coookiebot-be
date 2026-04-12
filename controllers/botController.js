@@ -7,6 +7,7 @@ const TradingMarker = require('../models/TradingMarker');
 const User = require('../models/User');
 const logger = require('../utils/logger');
 const { getExchangeProvider } = require('../services/exchanges/factory');
+const { validateRiskRewardRatioInput } = require('../utils/riskRewardRatio');
 
 const { startBot, stopBot } = require('../services/botServices')
 const { makelogbot } = require('../services/logsBotsServices');
@@ -48,6 +49,11 @@ exports.createBot = async (req, res) => {
       });
     }
 
+    const ratioValidation = validateRiskRewardRatioInput(riskRewardRatio || '1:2');
+    if (!ratioValidation.valid) {
+      return res.status(400).json({ message: ratioValidation.message });
+    }
+
     // fetch platform from exchange by id 
     const exchangeRecord = await Exchange.findById(exchange);
 
@@ -85,7 +91,7 @@ exports.createBot = async (req, res) => {
       marginMode: marginMode || 'CROSS',
       positionSide: positionSide || 'BOTH',
       signalConflictMode,
-      riskRewardRatio: riskRewardRatio || '1:2',
+      riskRewardRatio: ratioValidation.normalized,
       smartFeatures: {
         riskEngine: {
           enabled: Boolean(smartFeatures?.riskEngine?.enabled),
@@ -200,6 +206,14 @@ exports.getBotById = async (req, res) => {
 // ✏️ Update bot
 exports.updateBot = async (req, res) => {
   try {
+    if (Object.prototype.hasOwnProperty.call(req.body, 'riskRewardRatio')) {
+      const ratioValidation = validateRiskRewardRatioInput(req.body.riskRewardRatio);
+      if (!ratioValidation.valid) {
+        return res.status(400).json({ message: ratioValidation.message });
+      }
+      req.body.riskRewardRatio = ratioValidation.normalized;
+    }
+
     const updatedBot = await Bot.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!updatedBot) return res.status(404).json({ message: "Bot not found" });
 

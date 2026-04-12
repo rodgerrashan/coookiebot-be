@@ -3,6 +3,7 @@ const { simulateTrade } = require("../services/playgroundservice");
 const { availablePatterns } = require("../services/patterns/index");
 const logger = require('../utils/logger');
 const { getExchangeProvider } = require('../services/exchanges/factory');
+const { validateRiskRewardRatioInput } = require('../utils/riskRewardRatio');
 
 
 const platforms = [
@@ -204,6 +205,13 @@ exports.getBacktestResults = async (req, res) => {
 
     const stakeNum = Number(stake)
     const leverageNum = Number(multiplier || 1);
+    const ratioValidation = validateRiskRewardRatioInput(riskRewardRatio || '1:2');
+    if (!ratioValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: ratioValidation.message,
+      });
+    }
 
     const platformName = platformCodeToName(platform);
     if (!platformName) {
@@ -229,7 +237,7 @@ exports.getBacktestResults = async (req, res) => {
       leverageNum,
       1000,
       signalConflictMode || "allow_parallel",
-      riskRewardRatio || "1:2"
+      ratioValidation.normalized
     );
 
     // logger.debug("[RESULT]", tradeSimulateResults);
