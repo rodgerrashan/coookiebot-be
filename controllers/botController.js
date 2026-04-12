@@ -35,9 +35,17 @@ exports.createBot = async (req, res) => {
     } = req.body;
 
     // ✅ Validate required fields
-    if (!botName || !exchange || !tradingPair || !timeframe || !strategy || !investment) {
+    if (!botName || !exchange || !tradingPair || !timeframe || !strategy || !investment || !botMode) {
       logger.warn("[BOT CREATE] Missing required fields");
       return res.status(400).json({ message: "Missing required bot configuration fields." });
+    }
+
+    const validBotModes = ['Grid', 'Pattern Trading'];
+    if (!validBotModes.includes(botMode)) {
+      logger.warn(`[BOT CREATE] Unsupported bot mode: ${botMode}`);
+      return res.status(400).json({
+        message: `Unsupported bot mode. Allowed modes: ${validBotModes.join(', ')}`,
+      });
     }
 
     // fetch platform from exchange by id 

@@ -23,7 +23,7 @@ const BotSchema = new mongoose.Schema({
     tradingPair: { type: String, required: true },  // e.g. "R_100"
     timeframe: { type: String, required: true },     // e.g. "1m"
     strategy: { type: String, required: true },      // e.g. "martingale"
-    botMode: { type: String, enum: ['RSI', 'DCA', 'Grid', 'Orion', 'Pattern Trading'], required: true },
+    botMode: { type: String, enum: ['Grid', 'Pattern Trading'], required: true },
 
     // Investment
     investment: { type: Number, required: true },    // Amount to trade

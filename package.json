@@ -6,7 +6,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "build": "echo 'No build step needed for backend'"
+    "build": "echo 'No build step needed for backend'",
+    "migrate:bot-modes": "node scripts/migrateUnsupportedBotModes.js"
   },
   "keywords": [],
   "author": "",
