@@ -1,9 +1,12 @@
 
 const normalizeCandle = require('./normalizeCandle');
+const { resolveRewardMultiplier, formatRiskReward } = require('./riskReward');
 
 
 function bearishEngulfing(candles, options = {}) {
     if (!candles || candles.length < 2) return null;
+
+    const rewardMultiplier = resolveRewardMultiplier(options.riskRewardRatio, 2);
 
     const {
         minTrendCandles = 3,      // at least 3 green candles before
@@ -59,7 +62,7 @@ function bearishEngulfing(candles, options = {}) {
     const entryPrice = curr.close;
     const stopLoss = Math.max(curr.high, prev.high) + (curr.high - curr.low) * 0.1; // buffer above pattern high
     const risk = stopLoss - entryPrice;
-    const takeProfit = entryPrice - risk * 2; // 1:2 RR
+    const takeProfit = entryPrice - risk * rewardMultiplier;
 
     // Optional: ensure TP is reasonable (not too far in low volatility)
     const atr = calculateATR(candles.slice(-14)); // you should have an ATR function
@@ -72,7 +75,7 @@ function bearishEngulfing(candles, options = {}) {
         entryPrice: parseFloat(entryPrice.toFixed(5)),
         stopLoss: parseFloat(stopLoss.toFixed(5)),
         takeProfit: parseFloat(takeProfit.toFixed(5)),
-        riskReward: '1:2',
+        riskReward: formatRiskReward(rewardMultiplier),
         timestamp: curr.timestamp || new Date().toISOString(),
         details: {
             strictEngulfing,

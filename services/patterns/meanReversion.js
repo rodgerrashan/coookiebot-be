@@ -1,4 +1,5 @@
 const normalizeCandle = require('./normalizeCandle');
+const { resolveRewardMultiplier, formatRiskReward } = require('./riskReward');
 
 function sma(values, period) {
   if (!values || values.length < period) return null;
@@ -13,8 +14,10 @@ function std(values) {
   return Math.sqrt(variance);
 }
 
-function meanReversion(candles) {
+function meanReversion(candles, options = {}) {
   if (!candles || candles.length < 30) return null;
+
+  const rewardMultiplier = resolveRewardMultiplier(options.riskRewardRatio, 2);
 
   const normalized = candles.map(normalizeCandle).filter(Boolean);
   if (normalized.length < 30) return null;
@@ -31,21 +34,33 @@ function meanReversion(candles) {
   const riskDistance = Math.max(latest.close * 0.002, deviation * 0.8);
 
   if (zScore <= -1.5) {
+    const entryPrice = latest.close;
+    const stopLoss = latest.close - riskDistance;
+    const rrTarget = entryPrice + (riskDistance * rewardMultiplier);
+
     return {
       signal: 'BUY',
-      entryPrice: Number(latest.close.toFixed(5)),
-      stopLoss: Number((latest.close - riskDistance).toFixed(5)),
-      takeProfit: Number((basis).toFixed(5)),
+      entryPrice: Number(entryPrice.toFixed(5)),
+      stopLoss: Number(stopLoss.toFixed(5)),
+      // Keep mean-reversion anchor while allowing RR to extend target.
+      takeProfit: Number(Math.max(basis, rrTarget).toFixed(5)),
+      riskReward: formatRiskReward(rewardMultiplier),
       pattern: 'MEAN_REVERSION',
     };
   }
 
   if (zScore >= 1.5) {
+    const entryPrice = latest.close;
+    const stopLoss = latest.close + riskDistance;
+    const rrTarget = entryPrice - (riskDistance * rewardMultiplier);
+
     return {
       signal: 'SELL',
-      entryPrice: Number(latest.close.toFixed(5)),
-      stopLoss: Number((latest.close + riskDistance).toFixed(5)),
-      takeProfit: Number((basis).toFixed(5)),
+      entryPrice: Number(entryPrice.toFixed(5)),
+      stopLoss: Number(stopLoss.toFixed(5)),
+      // Keep mean-reversion anchor while allowing RR to extend target.
+      takeProfit: Number(Math.min(basis, rrTarget).toFixed(5)),
+      riskReward: formatRiskReward(rewardMultiplier),
       pattern: 'MEAN_REVERSION',
     };
   }

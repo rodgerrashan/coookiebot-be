@@ -4,6 +4,54 @@ const { encrypt } = require('../utils/encryptions');
 const logger = require('../utils/logger');
 const { getExchangeProvider } = require('../services/exchanges/factory');
 
+const MAX_ACTIVITY_ITEMS = 50;
+
+function toMaskedValue(value) {
+    if (!value) return null;
+    return '******';
+}
+
+function serializeExchange(exchange) {
+    return {
+        _id: exchange._id,
+        name: exchange.name,
+        platform: exchange.platform,
+        status: exchange.status,
+        isTestnet: Boolean(exchange.isTestnet),
+        statusCheckedAt: exchange.statusCheckedAt,
+        createdAt: exchange.createdAt,
+        updatedAt: exchange.updatedAt,
+        permissions: Array.isArray(exchange.permissions) ? exchange.permissions : [],
+        credentialMeta: {
+            hasApiKey: Boolean(exchange.apiKey),
+            hasApiSecret: Boolean(exchange.apiSecret),
+            hasApiToken: Boolean(exchange.apiToken),
+            maskedKey: toMaskedValue(exchange.apiKey),
+            maskedSecret: toMaskedValue(exchange.apiSecret),
+            maskedToken: toMaskedValue(exchange.apiToken),
+        },
+        lastError: exchange.lastError || null,
+        activitySummary: {
+            count: Array.isArray(exchange.activityLog) ? exchange.activityLog.length : 0,
+            latest: Array.isArray(exchange.activityLog) && exchange.activityLog.length
+                ? exchange.activityLog[exchange.activityLog.length - 1]
+                : null,
+        }
+    };
+}
+
+function pushActivity(exchange, entry) {
+    const current = Array.isArray(exchange.activityLog) ? exchange.activityLog : [];
+    const next = [...current, {
+        action: entry.action,
+        level: entry.level || 'info',
+        message: entry.message,
+        createdAt: entry.createdAt || new Date(),
+    }];
+
+    exchange.activityLog = next.slice(-MAX_ACTIVITY_ITEMS);
+}
+
 
 
 // --- GET: Fetch all exchanges ---
@@ -11,18 +59,7 @@ exports.getAllExchanges = async (req, res) => {
     try {
         const exchanges = await Exchange.find(); // Filter by user later
 
-        res.status(200).json(
-            exchanges.map(ex => ({
-                _id: ex._id,
-                name: ex.name,
-                platform: ex.platform,
-                status: ex.status,
-                isTestnet: ex.isTestnet,
-                statusCheckedAt: ex.statusCheckedAt,
-                createdAt: ex.createdAt,
-
-            }))
-        );
+        res.status(200).json(exchanges.map((ex) => serializeExchange(ex)));
     } catch (error) {
         logger.error("Error fetching exchanges", error);
         res.status(500).json({ message: 'Error fetching exchanges', error: error.message });
@@ -71,19 +108,21 @@ exports.createExchange = async (req, res) => {
             isTestnet: Boolean(isTestnet),
             status: 'Connected',
             statusCheckedAt: new Date(),
+            lastError: null,
+            permissions: isDeriv ? ['read', 'trade'] : ['read', 'trade'],
+        });
+
+        pushActivity(newExchange, {
+            action: 'connection.created',
+            level: 'success',
+            message: `${normalizedPlatform} connection created.`,
         });
 
         const savedExchange = await newExchange.save();
 
         res.status(201).json({
             message: `${normalizedPlatform} account connected successfully!`,
-            exchange: {
-                _id: savedExchange._id,
-                platform: savedExchange.platform,
-                name: savedExchange.name,
-                status: savedExchange.status,
-                isTestnet: savedExchange.isTestnet,
-            }
+            exchange: serializeExchange(savedExchange),
         });
 
     } catch (error) {
@@ -101,9 +140,14 @@ exports.deleteExchange = async (req, res) => {
         if (!exchange) {
             return res.status(404).json({ message: 'Exchange connection not found.' });
         }
+
+        const deletedName = exchange.name;
         await exchange.deleteOne();
-        logger.info(`[INFO] Exchange connection deleted: ${exchange.name}`);
-        res.status(200).json({ message: 'Exchange connection deleted successfully.' });
+        logger.info(`[INFO] Exchange connection deleted: ${deletedName}`);
+        res.status(200).json({
+            message: 'Exchange connection deleted successfully.',
+            deletedId: req.params.id,
+        });
     } catch (error) {
         logger.error('[ERROR] Error deleting exchange:', error);
         res.status(500).json({ message: 'Error deleting exchange', error: error.message });
@@ -131,14 +175,30 @@ exports.checkExchangeStatus = async (req, res) => {
 
         exchange.status = 'Connected';
         exchange.statusCheckedAt = new Date();
+        exchange.lastError = null;
+        pushActivity(exchange, {
+            action: 'connection.recheck',
+            level: 'success',
+            message: `${exchange.platform} connection check succeeded.`,
+        });
         await exchange.save();
-        return res.status(200).json({ status: 'ok', message: `${exchange.platform} connection active.` });
+        return res.status(200).json({
+            status: 'ok',
+            message: `${exchange.platform} connection active.`,
+            exchange: serializeExchange(exchange),
+        });
     } catch (error) {
         try {
             const exchange = await Exchange.findById(req.params.id);
             if (exchange) {
                 exchange.status = 'Disconnected';
                 exchange.statusCheckedAt = new Date();
+                exchange.lastError = error.message || 'Failed to verify exchange connection.';
+                pushActivity(exchange, {
+                    action: 'connection.recheck',
+                    level: 'error',
+                    message: exchange.lastError,
+                });
                 await exchange.save();
             }
         } catch (saveError) {
@@ -159,10 +219,92 @@ exports.getExchangeById = async (req, res) => {
             logger.warn('[WARN] Exchange not found with ID:', req.params.id);
             return res.status(404).json({ message: 'Exchange not found.' });
         }
-        res.status(200).json(exchange);
+        res.status(200).json(serializeExchange(exchange));
     } catch (error) {
         logger.error('[ERROR] Error fetching exchange:', error);
         res.status(500).json({ message: 'Error fetching exchange', error: error.message });
+    }
+};
+
+// --- PATCH: Update exchange configuration ---
+exports.updateExchange = async (req, res) => {
+    const { name, apiSecret, apiKey, isTestnet } = req.body;
+
+    try {
+        const exchange = await Exchange.findById(req.params.id);
+        if (!exchange) {
+            return res.status(404).json({ message: 'Exchange not found.' });
+        }
+
+        if (name && name !== exchange.name) {
+            exchange.name = String(name).trim();
+        }
+
+        if (typeof isTestnet === 'boolean') {
+            exchange.isTestnet = isTestnet;
+        }
+
+        const isDeriv = exchange.platform.toLowerCase() === 'deriv';
+        const isBinance = exchange.platform.toLowerCase() === 'binance';
+
+        if (isDeriv && apiSecret) {
+            exchange.apiToken = encrypt(apiSecret);
+        }
+
+        if (isBinance) {
+            if (apiKey) {
+                exchange.apiKey = encrypt(apiKey);
+            }
+            if (apiSecret) {
+                exchange.apiSecret = encrypt(apiSecret);
+            }
+        }
+
+        const provider = getExchangeProvider(exchange.platform);
+        await provider.validateCredentials({
+            apiToken: exchange.apiToken,
+            apiKey: exchange.apiKey,
+            apiSecret: exchange.apiSecret,
+            isTestnet: exchange.isTestnet,
+        });
+
+        exchange.status = 'Connected';
+        exchange.statusCheckedAt = new Date();
+        exchange.lastError = null;
+        pushActivity(exchange, {
+            action: 'connection.updated',
+            level: 'success',
+            message: `${exchange.platform} connection updated.`,
+        });
+
+        await exchange.save();
+
+        res.status(200).json({
+            message: 'Exchange updated successfully.',
+            exchange: serializeExchange(exchange),
+        });
+    } catch (error) {
+        logger.error('[ERROR] Error updating exchange:', error);
+        res.status(400).json({ message: 'Error updating exchange', error: error.message });
+    }
+};
+
+// --- GET: exchange activity entries ---
+exports.getExchangeActivity = async (req, res) => {
+    try {
+        const exchange = await Exchange.findById(req.params.id);
+        if (!exchange) {
+            return res.status(404).json({ message: 'Exchange not found.' });
+        }
+
+        const items = Array.isArray(exchange.activityLog) ? [...exchange.activityLog].reverse() : [];
+        return res.status(200).json({
+            exchangeId: exchange._id,
+            items,
+        });
+    } catch (error) {
+        logger.error('[ERROR] Error fetching exchange activity:', error);
+        res.status(500).json({ message: 'Error fetching exchange activity', error: error.message });
     }
 };
 

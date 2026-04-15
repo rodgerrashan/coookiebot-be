@@ -1,12 +1,15 @@
 const normalizeCandle = require('./normalizeCandle');
+const { resolveRewardMultiplier, formatRiskReward } = require('./riskReward');
 
 /**
  * Hammer candlestick (bullish reversal)
  * @param {Array} candles
  * @returns {Object|null} { signal, takeProfit, stopLoss } or null
  */
-function hammer(candles) {
+function hammer(candles, options = {}) {
     if (candles.length < 4) return null;
+
+    const rewardMultiplier = resolveRewardMultiplier(options.riskRewardRatio, 2);
 
     const c = normalizeCandle(candles[candles.length - 1]);
 
@@ -24,13 +27,14 @@ function hammer(candles) {
     if (downtrend && lowerShadow >= 2 * body && upperShadow <= body) {
         const entryPrice = c.close;
         const stopLoss = c.low;
-        const takeProfit = entryPrice + (entryPrice - stopLoss) * 2;
+        const takeProfit = entryPrice + (entryPrice - stopLoss) * rewardMultiplier;
 
         return {
             signal: 'BUY',
             takeProfit: parseFloat(takeProfit.toFixed(5)),
             stopLoss: parseFloat(stopLoss.toFixed(5)),
             entryPrice: parseFloat(entryPrice.toFixed(5)),
+            riskReward: formatRiskReward(rewardMultiplier),
             pattern: 'HMMR'
         };
     }

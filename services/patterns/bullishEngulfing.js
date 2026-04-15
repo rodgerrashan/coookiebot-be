@@ -1,5 +1,6 @@
 
 const normalizeCandle = require('./normalizeCandle');
+const { resolveRewardMultiplier, formatRiskReward } = require('./riskReward');
 
 
 
@@ -8,8 +9,10 @@ const normalizeCandle = require('./normalizeCandle');
  * @param {Array} candles - array of recent candles
  * @returns {Object|null} { signal, takeProfit, stopLoss } or null if no pattern
  */
-function bullishEngulfing(candles) {
+function bullishEngulfing(candles, options = {}) {
     if (candles.length < 4) return null;
+
+    const rewardMultiplier = resolveRewardMultiplier(options.riskRewardRatio, 2);
 
     const prev = normalizeCandle(candles[candles.length - 2]);
     const curr = normalizeCandle(candles[candles.length - 1]);
@@ -25,13 +28,14 @@ function bullishEngulfing(candles) {
 
         const entryPrice = curr.close;
         const stopLoss = curr.low; // safer stop below candle low
-        const takeProfit = entryPrice + (entryPrice - stopLoss) * 2; // 2:1 RR
+        const takeProfit = entryPrice + (entryPrice - stopLoss) * rewardMultiplier;
 
         return {
             signal: 'BUY',
             takeProfit: parseFloat(takeProfit.toFixed(5)),
             stopLoss: parseFloat(stopLoss.toFixed(5)),
             entryPrice: parseFloat(entryPrice.toFixed(5)),
+            riskReward: formatRiskReward(rewardMultiplier),
             pattern: 'BRSHENG'
         };
     }

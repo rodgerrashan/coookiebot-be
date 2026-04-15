@@ -1,5 +1,25 @@
 const mongoose = require('mongoose');
 
+const activityEntrySchema = new mongoose.Schema({
+    action: {
+        type: String,
+        required: true,
+    },
+    level: {
+        type: String,
+        enum: ['info', 'success', 'warning', 'error'],
+        default: 'info',
+    },
+    message: {
+        type: String,
+        required: true,
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now,
+    },
+}, { _id: false });
+
 const exchangeSchema = new mongoose.Schema({
     platform: {
         type: String,
@@ -35,6 +55,18 @@ const exchangeSchema = new mongoose.Schema({
     },
     statusCheckedAt: {
         type: Date,
+    },
+    permissions: {
+        type: [String],
+        default: ['read'],
+    },
+    lastError: {
+        type: String,
+        default: null,
+    },
+    activityLog: {
+        type: [activityEntrySchema],
+        default: [],
     },
     createdAt: {
         type: Date,

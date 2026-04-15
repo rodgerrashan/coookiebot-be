@@ -1,4 +1,5 @@
 const normalizeCandle = require('./normalizeCandle');
+const { resolveRewardMultiplier, formatRiskReward } = require('./riskReward');
 
 function sma(values, period) {
   if (!values || values.length < period) return null;
@@ -6,8 +7,10 @@ function sma(values, period) {
   return subset.reduce((sum, value) => sum + value, 0) / period;
 }
 
-function trendStrategy(candles) {
+function trendStrategy(candles, options = {}) {
   if (!candles || candles.length < 50) return null;
+
+  const rewardMultiplier = resolveRewardMultiplier(options.riskRewardRatio, 2);
 
   const normalized = candles.map(normalizeCandle).filter(Boolean);
   if (normalized.length < 50) return null;
@@ -27,7 +30,8 @@ function trendStrategy(candles) {
       signal: 'BUY',
       entryPrice: Number(latest.close.toFixed(5)),
       stopLoss: Number((latest.close - riskDistance).toFixed(5)),
-      takeProfit: Number((latest.close + riskDistance * 2).toFixed(5)),
+      takeProfit: Number((latest.close + riskDistance * rewardMultiplier).toFixed(5)),
+      riskReward: formatRiskReward(rewardMultiplier),
       pattern: 'TREND_FOLLOWING',
     };
   }
@@ -37,7 +41,8 @@ function trendStrategy(candles) {
       signal: 'SELL',
       entryPrice: Number(latest.close.toFixed(5)),
       stopLoss: Number((latest.close + riskDistance).toFixed(5)),
-      takeProfit: Number((latest.close - riskDistance * 2).toFixed(5)),
+      takeProfit: Number((latest.close - riskDistance * rewardMultiplier).toFixed(5)),
+      riskReward: formatRiskReward(rewardMultiplier),
       pattern: 'TREND_FOLLOWING',
     };
   }

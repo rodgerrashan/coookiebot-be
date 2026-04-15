@@ -4,7 +4,10 @@ const {
     getAllExchanges, 
     createExchange,
     deleteExchange,
-    checkExchangeStatus
+    checkExchangeStatus,
+    getExchangeById,
+    updateExchange,
+    getExchangeActivity,
 } = require('../controllers/exchangeController');
 
 // --- API ROUTES ---
@@ -20,6 +23,15 @@ router.delete('/:id', deleteExchange);
 
 // POST to check the connection status of an exchange by ID
 router.get('/status/:id', checkExchangeStatus);
+
+// GET recent activity entries for one exchange
+router.get('/:id/activity', getExchangeActivity);
+
+// GET details for one exchange
+router.get('/:id', getExchangeById);
+
+// PATCH update one exchange
+router.patch('/:id', updateExchange);
 
 module.exports = router;
 

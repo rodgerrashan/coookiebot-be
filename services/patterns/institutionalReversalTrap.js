@@ -3,9 +3,12 @@
 
 
 const normalizeCandle = require('./normalizeCandle');
+const { resolveRewardMultiplier, formatRiskReward } = require('./riskReward');
 
 function institutionalReversalTrap(candles, options = {}) {
     if (candles.length < 50) return null;
+
+    const rewardMultiplier = resolveRewardMultiplier(options.riskRewardRatio, 4);
 
     const {
         minVolumeSpike = 2.0,        // Volume must be 2x+ average
@@ -64,7 +67,7 @@ function institutionalReversalTrap(candles, options = {}) {
         const entry = c1.close;
         const stopLoss = c3.high + (c3.high - c3.low) * 0.05; // Above sweep high
         const risk = stopLoss - entry;
-        const takeProfit = entry - risk * 4; // 1:4 minimum
+        const takeProfit = entry - risk * rewardMultiplier;
 
         return {
             signal: 'SELL',
@@ -73,7 +76,7 @@ function institutionalReversalTrap(candles, options = {}) {
             entryPrice: parseFloat(entry.toFixed(5)),
             stopLoss: parseFloat(stopLoss.toFixed(5)),
             takeProfit: parseFloat(takeProfit.toFixed(5)),
-            riskReward: '1:4+',
+            riskReward: formatRiskReward(rewardMultiplier),
             expectedProfitFactor: 4.8,
             winRateHistorical: '82%',
             entryOn: 'current close or next open',
@@ -108,7 +111,7 @@ function institutionalReversalTrap(candles, options = {}) {
         const entry = c1.close;
         const stopLoss = c3.low - (c3.high - c3.low) * 0.05;
         const risk = entry - stopLoss;
-        const takeProfit = entry + risk * 4;
+        const takeProfit = entry + risk * rewardMultiplier;
 
         return {
             signal: 'BUY',
@@ -117,7 +120,7 @@ function institutionalReversalTrap(candles, options = {}) {
             entryPrice: parseFloat(entry.toFixed(5)),
             stopLoss: parseFloat(stopLoss.toFixed(5)),
             takeProfit: parseFloat(takeProfit.toFixed(5)),
-            riskReward: '1:4+',
+            riskReward: formatRiskReward(rewardMultiplier),
             expectedProfitFactor: 5.1,
             winRateHistorical: '84%',
             entryOn: 'current close or next open',
