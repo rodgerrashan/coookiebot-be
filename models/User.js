@@ -34,7 +34,11 @@ const userScheme = new Schema({
         notifications: {
             email: { type: Boolean, default: true },
             push: { type: Boolean, default: true },
-            sms: { type: Boolean, default: false }
+            browser: { type: Boolean, default: true },
+            securityEmails: { type: Boolean, default: true },
+            tradingRiskEmails: { type: Boolean, default: true },
+            tradingInfoEmails: { type: Boolean, default: true },
+            tradeSummaryIntervalMinutes: { type: Number, default: 30 }
         }
     },
     settings: {
@@ -63,6 +67,12 @@ const userScheme = new Schema({
         isSuspended: { type: Boolean, default: false },
         suspendedUntil: { type: Date, default: null }
     },
+    deleteAccountOtp: { type: String, default: '' },
+    deleteAccountOtpExpireAt: { type: Number, default: 0 },
+    suspendAccountOtp: { type: String, default: '' },
+    suspendAccountOtpExpireAt: { type: Number, default: 0 },
+    pendingSuspendMonths: { type: Number, default: 0 },
+    pendingSuspendReason: { type: String, default: '' },
     willchangeEmail: { type: String },
     willchangeEmailOTP: { type: String },
     willchangeEmailOTPExpiredAt: { type: Number, default: 0 },

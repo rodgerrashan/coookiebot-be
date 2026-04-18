@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Confirm Account Suspension</title>
+  <style type="text/css">
+    body { margin: 0; padding: 0; width: 100% !important; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; color: #1f2937; }
+    .email-wrapper { background-color: #f8fafc; padding: 16px; }
+    .email-content { background-color: #ffffff; width: 100%; max-width: 520px; margin: 0 auto; border-radius: 20px; overflow: hidden; border: 1px solid #e5e7eb; }
+    .header { padding: 28px 20px 12px; text-align: center; }
+    .body-text { padding: 0 20px 18px; line-height: 1.6; text-align: center; }
+    h1 { font-size: 24px; font-weight: 700; margin: 0 0 10px; color: #111827; }
+    p { font-size: 15px; color: #374151; margin: 0 0 14px; }
+    .otp-card { background-color: #fffbeb; border: 1px solid #fcd34d; border-radius: 16px; padding: 20px; display: inline-block; min-width: 190px; margin: 8px 0 14px; }
+    .otp-code { font-family: Menlo, Monaco, Consolas, monospace; font-size: 32px; font-weight: 700; letter-spacing: 6px; color: #92400e; }
+    .meta { background-color: #f9fafb; border: 1px solid #e5e7eb; color: #374151; border-radius: 12px; padding: 12px; font-size: 13px; text-align: left; margin-top: 12px; }
+    .footer { padding: 18px 20px; text-align: center; color: #6b7280; font-size: 11px; line-height: 1.6; background-color: #f9fafb; }
+    @media only screen and (max-width: 480px) {
+      .email-wrapper { padding: 8px !important; }
+      h1 { font-size: 22px !important; }
+      .otp-code { font-size: 28px !important; letter-spacing: 4px !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+    <div class="email-content">
+      <div class="header">
+        <h1>Confirm Account Suspension</h1>
+      </div>
+      <div class="body-text">
+        <p>Hello {{name}},</p>
+        <p>We received a request to temporarily suspend account <strong>{{email}}</strong>.</p>
+        <p>Use this one-time code to continue:</p>
+
+        <div class="otp-card">
+          <div class="otp-code">{{otp}}</div>
+        </div>
+
+        <div class="meta">
+          <strong>Duration:</strong> {{months}} month(s)<br>
+          <strong>Reason:</strong> {{reason}}<br>
+          <strong>Code expires:</strong> 15 minutes
+        </div>
+      </div>
+      <div class="footer">
+        Suspension will sign out all active sessions immediately after confirmation.
+      </div>
+    </div>
+  </div>
+</body>
+</html>

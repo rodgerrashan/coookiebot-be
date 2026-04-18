@@ -22,6 +22,10 @@ const {
 	disableTwoFactor,
 	suspendAccount,
 	deleteAccount,
+	sendDeleteConfirmationOtp,
+	deleteAccountVerified,
+	sendSuspendConfirmationOtp,
+	suspendAccountVerified,
 } = require('../controllers/authController');
 
 const authRouter = express.Router();
@@ -64,6 +68,10 @@ authRouter.post('/2fa/disable', isAuthenticated, disableTwoFactor);
 // settings: account actions
 authRouter.post('/suspend-account', isAuthenticated, suspendAccount);
 authRouter.delete('/delete-account', isAuthenticated, deleteAccount);
+authRouter.post('/send-delete-confirmation-otp', isAuthenticated, sendDeleteConfirmationOtp);
+authRouter.delete('/delete-account-verified', isAuthenticated, deleteAccountVerified);
+authRouter.post('/send-suspend-confirmation-otp', isAuthenticated, sendSuspendConfirmationOtp);
+authRouter.post('/suspend-account-verified', isAuthenticated, suspendAccountVerified);
 
 
 module.exports = authRouter;

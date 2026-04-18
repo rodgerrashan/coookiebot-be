@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Account Deletion Completed</title>
+  <style type="text/css">
+    body { margin: 0; padding: 0; width: 100% !important; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; color: #1f2937; }
+    .email-wrapper { background-color: #f8fafc; padding: 16px; }
+    .email-content { background-color: #ffffff; width: 100%; max-width: 520px; margin: 0 auto; border-radius: 20px; overflow: hidden; border: 1px solid #e5e7eb; }
+    .header { padding: 28px 20px 12px; text-align: center; }
+    .body-text { padding: 0 20px 18px; line-height: 1.6; text-align: center; }
+    h1 { font-size: 24px; font-weight: 700; margin: 0 0 10px; color: #111827; }
+    p { font-size: 15px; color: #374151; margin: 0 0 14px; }
+    .status-card { background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 16px; padding: 18px; color: #991b1b; font-size: 14px; }
+    .footer { padding: 18px 20px; text-align: center; color: #6b7280; font-size: 11px; line-height: 1.6; background-color: #f9fafb; }
+    @media only screen and (max-width: 480px) {
+      .email-wrapper { padding: 8px !important; }
+      h1 { font-size: 22px !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+    <div class="email-content">
+      <div class="header">
+        <h1>Account Deleted</h1>
+      </div>
+      <div class="body-text">
+        <p>Hello {{name}},</p>
+        <p>Your account <strong>{{email}}</strong> has been permanently deleted.</p>
+        <div class="status-card">
+          If this action was not performed by you, contact support immediately.
+        </div>
+      </div>
+      <div class="footer">
+        This is an automated security notification from CoookieBot.
+      </div>
+    </div>
+  </div>
+</body>
+</html>

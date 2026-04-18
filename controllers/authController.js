@@ -9,6 +9,41 @@ const logger = require('../utils/logger');
 const { getSessionDetails } = require('../services/userServices');
 
 const getCompiledHtml = require('../mail/mail-template.service').getCompiledHtml;
+
+const generateSixDigitOtp = () => String(Math.floor(100000 + Math.random() * 900000));
+const TRADE_SUMMARY_INTERVALS = new Set([15, 30, 60]);
+
+const normalizeNotificationPreferences = (notifications = {}) => ({
+    email: notifications?.email ?? true,
+    push: notifications?.push ?? true,
+    browser: notifications?.browser ?? true,
+    securityEmails: notifications?.securityEmails ?? true,
+    tradingRiskEmails: notifications?.tradingRiskEmails ?? true,
+    tradingInfoEmails: notifications?.tradingInfoEmails ?? true,
+    tradeSummaryIntervalMinutes: TRADE_SUMMARY_INTERVALS.has(Number(notifications?.tradeSummaryIntervalMinutes))
+        ? Number(notifications.tradeSummaryIntervalMinutes)
+        : 30,
+});
+
+const shouldSendOptionalEmail = (user, category) => {
+    const preferences = normalizeNotificationPreferences(user?.preferences?.notifications);
+    if (!preferences.email) return false;
+
+    if (category === 'security') return preferences.securityEmails;
+    if (category === 'tradingRisk') return preferences.tradingRiskEmails;
+    if (category === 'tradingInfo') return preferences.tradingInfoEmails;
+
+    return true;
+};
+
+const clearAuthCookie = (res) => {
+    res.clearCookie('token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'
+    });
+};
+
 const isUserApproved = (user) => {
     if (!user?.approvalStatus) {
         return true;
@@ -19,6 +54,7 @@ const isUserApproved = (user) => {
 
 const getPublicUserPayload = (user, currentSessionId = null) => {
     const sessions = Array.isArray(user.activeSessions) ? user.activeSessions : [];
+    const notifications = normalizeNotificationPreferences(user.preferences?.notifications);
 
     return {
         id: user._id,
@@ -36,11 +72,7 @@ const getPublicUserPayload = (user, currentSessionId = null) => {
         preferences: {
             theme: user.preferences?.theme || 'light',
             language: user.preferences?.language || 'en',
-            notifications: {
-                email: user.preferences?.notifications?.email ?? true,
-                push: user.preferences?.notifications?.push ?? true,
-                sms: user.preferences?.notifications?.sms ?? false,
-            }
+            notifications,
         },
         settings: {
             twoFactorEnabled: !!user.settings?.twoFactorEnabled,
@@ -91,7 +123,7 @@ const getUserFromToken = async (req) => {
 const me = async (req, res) => {
     try {
         // User is already attached by middleware — fetch fresh if needed, but select safe fields
-        const user = await User.findById(req.user._id).select('-password -verifyOtp -resetOtp -resetOtpExpiredAt -verifyOtpExpireAt');
+        const user = await User.findById(req.user._id).select('-password -verifyOtp -resetOtp -resetOtpExpiredAt -verifyOtpExpireAt -deleteAccountOtp -deleteAccountOtpExpireAt -suspendAccountOtp -suspendAccountOtpExpireAt');
 
         if (!user) {
             return res.status(404).json({ success: false, message: 'User not found.' });
@@ -622,15 +654,42 @@ const updateProfile = async (req, res) => {
 };
 
 const updateNotificationPreferences = async (req, res) => {
-    const { email, push, sms } = req.body;
+    const {
+        email,
+        push,
+        browser,
+        securityEmails,
+        tradingRiskEmails,
+        tradingInfoEmails,
+        tradeSummaryIntervalMinutes,
+    } = req.body;
 
     try {
         const user = await User.findById(req.user._id);
         user.preferences = user.preferences || {};
+        const existing = normalizeNotificationPreferences(user.preferences.notifications);
+        const nextInterval = Number(tradeSummaryIntervalMinutes);
+
+        if (
+            tradeSummaryIntervalMinutes !== undefined
+            && !TRADE_SUMMARY_INTERVALS.has(nextInterval)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: 'tradeSummaryIntervalMinutes must be one of 15, 30, or 60.',
+            });
+        }
+
         user.preferences.notifications = {
-            email: typeof email === 'boolean' ? email : (user.preferences.notifications?.email ?? true),
-            push: typeof push === 'boolean' ? push : (user.preferences.notifications?.push ?? true),
-            sms: typeof sms === 'boolean' ? sms : (user.preferences.notifications?.sms ?? false),
+            email: typeof email === 'boolean' ? email : existing.email,
+            push: typeof push === 'boolean' ? push : existing.push,
+            browser: typeof browser === 'boolean' ? browser : existing.browser,
+            securityEmails: typeof securityEmails === 'boolean' ? securityEmails : existing.securityEmails,
+            tradingRiskEmails: typeof tradingRiskEmails === 'boolean' ? tradingRiskEmails : existing.tradingRiskEmails,
+            tradingInfoEmails: typeof tradingInfoEmails === 'boolean' ? tradingInfoEmails : existing.tradingInfoEmails,
+            tradeSummaryIntervalMinutes: tradeSummaryIntervalMinutes !== undefined
+                ? nextInterval
+                : existing.tradeSummaryIntervalMinutes,
         };
         user.updatedAt = Date.now();
         await user.save();
@@ -829,11 +888,7 @@ const suspendAccount = async (req, res) => {
 
         await user.save();
 
-        res.clearCookie('token', {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'
-        });
+        clearAuthCookie(res);
 
         return res.json({ success: true, message: `Account suspended until ${suspendedUntil.toISOString()}.` });
     } catch (error) {
@@ -858,13 +913,204 @@ const deleteAccount = async (req, res) => {
 
         await User.deleteOne({ _id: user._id });
 
-        res.clearCookie('token', {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'
-        });
+        clearAuthCookie(res);
 
         return res.json({ success: true, message: 'Account deleted successfully.' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const sendDeleteConfirmationOtp = async (req, res) => {
+    const { password } = req.body;
+
+    if (!password) {
+        return res.status(400).json({ success: false, message: 'Password is required to continue.' });
+    }
+
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        const validPassword = await bcrypt.compare(password, user.password);
+        if (!validPassword) {
+            return res.status(400).json({ success: false, message: 'Password is incorrect.' });
+        }
+
+        const otp = generateSixDigitOtp();
+        user.deleteAccountOtp = otp;
+        user.deleteAccountOtpExpireAt = Date.now() + 15 * 60 * 1000;
+        await user.save();
+
+        await transporter.sendMail({
+            from: process.env.SENDER_EMAIL,
+            to: user.email,
+            subject: 'Confirm account deletion',
+            html: getCompiledHtml('delete-account', { otp, email: user.email, name: user.name }),
+        });
+
+        return res.json({ success: true, message: 'Deletion confirmation code sent to your email.' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const deleteAccountVerified = async (req, res) => {
+    const { otp } = req.body;
+
+    if (!otp || String(otp).length !== 6) {
+        return res.status(400).json({ success: false, message: 'A valid 6-digit OTP is required.' });
+    }
+
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        const shouldSendCompletionMail = shouldSendOptionalEmail(user, 'security');
+
+        if (!user.deleteAccountOtp || user.deleteAccountOtp !== String(otp)) {
+            return res.status(400).json({ success: false, message: 'Invalid OTP.' });
+        }
+
+        if (user.deleteAccountOtpExpireAt < Date.now()) {
+            return res.status(400).json({ success: false, message: 'OTP expired. Request a new code.' });
+        }
+
+        await User.deleteOne({ _id: user._id });
+
+        if (shouldSendCompletionMail) {
+            try {
+                await transporter.sendMail({
+                    from: process.env.SENDER_EMAIL,
+                    to: user.email,
+                    subject: 'Account deletion completed',
+                    html: getCompiledHtml('delete-account-confirmed', { email: user.email, name: user.name }),
+                });
+            } catch (mailError) {
+                logger.error(`Failed to send deletion completion email: ${mailError.message}`);
+            }
+        }
+
+        clearAuthCookie(res);
+
+        return res.json({ success: true, message: 'Account deleted successfully.' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const sendSuspendConfirmationOtp = async (req, res) => {
+    const { months, reason } = req.body;
+    const parsedMonths = Number(months);
+    const safeReason = typeof reason === 'string' ? reason.trim().slice(0, 180) : '';
+
+    if (!Number.isInteger(parsedMonths) || parsedMonths < 1 || parsedMonths > 36) {
+        return res.status(400).json({ success: false, message: 'Suspension duration must be between 1 and 36 months.' });
+    }
+
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        const suspendedUntil = user.accountStatus?.suspendedUntil ? new Date(user.accountStatus.suspendedUntil) : null;
+        if (user.accountStatus?.isSuspended && suspendedUntil && suspendedUntil > new Date()) {
+            return res.status(400).json({ success: false, message: `Account is already suspended until ${suspendedUntil.toISOString()}.` });
+        }
+
+        const otp = generateSixDigitOtp();
+        user.suspendAccountOtp = otp;
+        user.suspendAccountOtpExpireAt = Date.now() + 15 * 60 * 1000;
+        user.pendingSuspendMonths = parsedMonths;
+        user.pendingSuspendReason = safeReason;
+        await user.save();
+
+        await transporter.sendMail({
+            from: process.env.SENDER_EMAIL,
+            to: user.email,
+            subject: 'Confirm account suspension',
+            html: getCompiledHtml('suspend-account', {
+                otp,
+                email: user.email,
+                name: user.name,
+                months: parsedMonths,
+                reason: safeReason || 'No reason provided'
+            }),
+        });
+
+        return res.json({ success: true, message: 'Suspension confirmation code sent to your email.' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const suspendAccountVerified = async (req, res) => {
+    const { otp } = req.body;
+
+    if (!otp || String(otp).length !== 6) {
+        return res.status(400).json({ success: false, message: 'A valid 6-digit OTP is required.' });
+    }
+
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        const shouldSendCompletionMail = shouldSendOptionalEmail(user, 'security');
+
+        if (!user.suspendAccountOtp || user.suspendAccountOtp !== String(otp)) {
+            return res.status(400).json({ success: false, message: 'Invalid OTP.' });
+        }
+
+        if (user.suspendAccountOtpExpireAt < Date.now()) {
+            return res.status(400).json({ success: false, message: 'OTP expired. Request a new code.' });
+        }
+
+        const parsedMonths = Number(user.pendingSuspendMonths);
+        if (!Number.isInteger(parsedMonths) || parsedMonths < 1 || parsedMonths > 36) {
+            return res.status(400).json({ success: false, message: 'No valid pending suspension request found.' });
+        }
+
+        const suspendedUntil = new Date();
+        suspendedUntil.setMonth(suspendedUntil.getMonth() + parsedMonths);
+
+        user.accountStatus = user.accountStatus || {};
+        user.accountStatus.isSuspended = true;
+        user.accountStatus.suspendedUntil = suspendedUntil;
+        user.activeSessions = [];
+        user.suspendAccountOtp = '';
+        user.suspendAccountOtpExpireAt = 0;
+        user.pendingSuspendMonths = 0;
+        user.pendingSuspendReason = '';
+
+        await user.save();
+
+        if (shouldSendCompletionMail) {
+            try {
+                await transporter.sendMail({
+                    from: process.env.SENDER_EMAIL,
+                    to: user.email,
+                    subject: 'Account suspended',
+                    html: getCompiledHtml('suspend-account-confirmed', {
+                        email: user.email,
+                        name: user.name,
+                        suspendedUntil: suspendedUntil.toISOString(),
+                    }),
+                });
+            } catch (mailError) {
+                logger.error(`Failed to send suspension completion email: ${mailError.message}`);
+            }
+        }
+
+        clearAuthCookie(res);
+
+        return res.json({ success: true, message: `Account suspended until ${suspendedUntil.toISOString()}.` });
     } catch (error) {
         return res.status(500).json({ success: false, message: error.message });
     }
@@ -922,4 +1168,8 @@ module.exports = {
     disableTwoFactor,
     suspendAccount,
     deleteAccount,
+    sendDeleteConfirmationOtp,
+    deleteAccountVerified,
+    sendSuspendConfirmationOtp,
+    suspendAccountVerified,
 };
