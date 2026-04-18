@@ -13,6 +13,8 @@ const {
   getBotLogs,
   getBotCandles,
   getMarkers,
+  getBotsSummary,
+  getDashboardSummary,
 } = require('../controllers/botController');
 const { isAuthenticated, requireTradingApproval } = require('../controllers/authController');
 
@@ -20,6 +22,9 @@ router.use(isAuthenticated);
 
 router.post('/', createBot);
 router.get('/', getBots);
+
+router.get('/summary', getBotsSummary);
+router.get('/dashboard', getDashboardSummary);
 
 
 router.get('/:id', getBotById);
