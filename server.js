@@ -5,6 +5,12 @@ const cors = require('cors');
 require('dotenv').config();
 const cookie_parser = require('cookie-parser');
 const http = require('http');
+const dns = require('dns');
+
+dns.setServers([
+    '1.1.1.1',
+    '8.8.8.8'
+])
 
 const {initWebSocket} = require('./ws/socket');
 
