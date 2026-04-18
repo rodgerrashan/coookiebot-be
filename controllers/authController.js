@@ -1,5 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const speakeasy = require('speakeasy');
+const { randomUUID } = require('crypto');
 const User = require('../models/User').default;
 const transporter = require('../mail/mail.config');
 const { default: mongoose } = require('mongoose');
@@ -7,6 +9,61 @@ const logger = require('../utils/logger');
 const { getSessionDetails } = require('../services/userServices');
 
 const getCompiledHtml = require('../mail/mail-template.service').getCompiledHtml;
+const isUserApproved = (user) => {
+    if (!user?.approvalStatus) {
+        return true;
+    }
+
+    return user.approvalStatus === 'approved';
+};
+
+const getPublicUserPayload = (user, currentSessionId = null) => {
+    const sessions = Array.isArray(user.activeSessions) ? user.activeSessions : [];
+
+    return {
+        id: user._id,
+        userID: user.userID,
+        name: user.name,
+        email: user.email,
+        role: user.role || 'user',
+        isAccountVerified: user.isAccountVerified,
+        approvalStatus: user.approvalStatus || 'approved',
+        isApproved: isUserApproved(user),
+        approvedAt: user.approvedAt || null,
+        rejectedAt: user.rejectedAt || null,
+        rejectionReason: user.rejectionReason || '',
+        profilePicture: user.profilePicture,
+        preferences: {
+            theme: user.preferences?.theme || 'light',
+            language: user.preferences?.language || 'en',
+            notifications: {
+                email: user.preferences?.notifications?.email ?? true,
+                push: user.preferences?.notifications?.push ?? true,
+                sms: user.preferences?.notifications?.sms ?? false,
+            }
+        },
+        settings: {
+            twoFactorEnabled: !!user.settings?.twoFactorEnabled,
+            twoFactorPendingSetup: !!user.settings?.twoFactorTempSecret,
+        },
+        accountStatus: {
+            isSuspended: !!user.accountStatus?.isSuspended,
+            suspendedUntil: user.accountStatus?.suspendedUntil || null,
+        },
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+        lastSession: user.lastSession,
+        activeSessions: sessions.map((session) => ({
+            sessionId: session.sessionId,
+            ip: session.ip,
+            browser: session.browser,
+            os: session.os,
+            device: session.device,
+            lastLogin: session.lastLogin,
+            isCurrent: currentSessionId ? session.sessionId === currentSessionId : false,
+        })),
+    };
+};
 
 
 
@@ -42,24 +99,7 @@ const me = async (req, res) => {
 
         return res.json({
             success: true,
-            // send user everything except password
-            user: {
-                id: user._id,
-                userID: user.userID,
-                name: user.name,
-                email: user.email,
-                isAccountVerified: user.isAccountVerified,
-                profilePicture: user.profilePicture,
-                theme: user.theme,
-                language: user.language,
-                notifications: user.notifications,
-                settings: user.settings,
-                createdAt: user.createdAt,
-                updatedAt: user.updatedAt,
-                lastSession: user.lastSession,
-
-
-            }
+            user: getPublicUserPayload(user, req.sessionId),
         });
     } catch (error) {
         console.error('Error in /me endpoint:', error);
@@ -100,12 +140,26 @@ const register = async (req, res) => {
         const userID = `CBU${email.split('@')[0]}${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100).toString().padStart(2, '0')}`;
         const name = email.split('@')[0];
 
-        const user = new User({ email, password: hashedPassword, userID: userID, profilePicture: profilePicture, name: name, lastSession: sessionInfo });
+        const sessionId = randomUUID();
+        const activeSession = { sessionId, ...sessionInfo, lastLogin: new Date() };
+
+        const user = new User({
+            email,
+            password: hashedPassword,
+            userID: userID,
+            profilePicture: profilePicture,
+            name: name,
+            role: 'user',
+            approvalStatus: 'pending',
+            approvalRequestedAt: new Date(),
+            lastSession: sessionInfo,
+            activeSessions: [activeSession],
+        });
         await user.save();
 
 
         // Generate JWT token
-        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
+        const token = jwt.sign({ id: user._id, sid: sessionId }, process.env.JWT_SECRET, { expiresIn: '1d' });
 
         res.cookie('token', token, {
             httpOnly: true,
@@ -127,7 +181,10 @@ const register = async (req, res) => {
 
         await transporter.sendMail(mailOptions);
 
-        return res.json({ success: true });
+        return res.json({
+            success: true,
+            message: 'Registration complete. Verify your email and wait for admin approval before trading.',
+        });
 
     } catch (error) {
         res.json({ success: false, message: error.message })
@@ -147,19 +204,25 @@ const login = async (req, res) => {
         if (validUser) {
             const validpassword = await bcrypt.compare(password, validUser.password);
 
-            // if (!validUser.isAccountVerified) {
-            //     return res.status(403).json({ success: false, message: 'Please verify your email before login' });
-            // }
+            if (!validUser.isAccountVerified) {
+                return res.status(403).json({ success: false, message: 'Please verify your email before login' });
+            }
 
             if (validpassword) {
                 const sessionInfo = getSessionDetails(req);
                 logger.debug("sessionInfo", sessionInfo);
+                const sessionId = randomUUID();
+                const newSession = { sessionId, ...sessionInfo, lastLogin: new Date() };
 
                 // save in database
                 validUser.lastSession = sessionInfo;
+                validUser.activeSessions = [
+                    ...(Array.isArray(validUser.activeSessions) ? validUser.activeSessions : []),
+                    newSession,
+                ].slice(-10);
                 validUser.save();
 
-                const token = jwt.sign({ id: validUser._id }, process.env.JWT_SECRET, { expiresIn: '5h' });
+                const token = jwt.sign({ id: validUser._id, sid: sessionId }, process.env.JWT_SECRET, { expiresIn: '5h' });
                 res.cookie('token', token, {
                     httpOnly: true,
                     secure: process.env.NODE_ENV === 'production',
@@ -185,6 +248,13 @@ const login = async (req, res) => {
 
 const logout = async (req, res) => {
     try {
+        if (req.user && req.sessionId) {
+            req.user.activeSessions = (req.user.activeSessions || []).filter(
+                (session) => session.sessionId !== req.sessionId
+            );
+            await req.user.save();
+        }
+
         res.clearCookie('token', {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
@@ -360,8 +430,35 @@ const isAuthenticated = async (req, res, next) => {
             return res.status(403).json({ success: false, message: 'Please verify your email first.' });
         }
 
+        if (user.accountStatus?.isSuspended) {
+            const suspendedUntil = user.accountStatus?.suspendedUntil ? new Date(user.accountStatus.suspendedUntil) : null;
+
+            if (suspendedUntil && suspendedUntil > new Date()) {
+                return res.status(403).json({
+                    success: false,
+                    message: `Your account is suspended until ${suspendedUntil.toISOString()}`,
+                });
+            }
+
+            user.accountStatus.isSuspended = false;
+            user.accountStatus.suspendedUntil = null;
+            await user.save();
+        }
+
+        const sessionId = decoded.sid || null;
+        if (sessionId) {
+            const hasActiveSession = (user.activeSessions || []).some(
+                (session) => session.sessionId === sessionId
+            );
+
+            if (!hasActiveSession) {
+                return res.status(401).json({ success: false, message: 'Session is no longer active. Please login again.' });
+            }
+        }
+
         // Attach the user to the request object
         req.user = user;
+        req.sessionId = sessionId;
 
         next();
     }
@@ -467,4 +564,362 @@ const verifyOTPChangeEmail = async (req, res) => {
         return res.json({ success: false, message: error.message }, 500);
     }
 }
-module.exports = { register, login, logout, sendVerifyOtp, verifyEmail, sendResetOtp, resetPassword, isAuthenticated, me, sendVerifyOtpChangingEmails, verifyOTPChangeEmail };
+
+const updatePassword = async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+        return res.status(400).json({ success: false, message: 'Current password and new password are required.' });
+    }
+
+    if (newPassword.length < 6) {
+        return res.status(400).json({ success: false, message: 'New password must be at least 6 characters long.' });
+    }
+
+    try {
+        const user = await User.findById(req.user._id);
+        const isValidCurrentPassword = await bcrypt.compare(currentPassword, user.password);
+
+        if (!isValidCurrentPassword) {
+            return res.status(400).json({ success: false, message: 'Current password is incorrect.' });
+        }
+
+        user.password = await bcrypt.hash(newPassword, 10);
+        user.updatedAt = Date.now();
+        await user.save();
+
+        return res.json({ success: true, message: 'Password updated successfully.' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const updateProfile = async (req, res) => {
+    const { name, profilePicture } = req.body;
+
+    try {
+        const user = await User.findById(req.user._id);
+
+        if (typeof name === 'string' && name.trim()) {
+            user.name = name.trim().slice(0, 60);
+        }
+
+        if (typeof profilePicture === 'string' && profilePicture.trim()) {
+            user.profilePicture = profilePicture.trim();
+        }
+
+        user.updatedAt = Date.now();
+        await user.save();
+
+        return res.json({
+            success: true,
+            message: 'Profile updated successfully.',
+            user: getPublicUserPayload(user, req.sessionId),
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const updateNotificationPreferences = async (req, res) => {
+    const { email, push, sms } = req.body;
+
+    try {
+        const user = await User.findById(req.user._id);
+        user.preferences = user.preferences || {};
+        user.preferences.notifications = {
+            email: typeof email === 'boolean' ? email : (user.preferences.notifications?.email ?? true),
+            push: typeof push === 'boolean' ? push : (user.preferences.notifications?.push ?? true),
+            sms: typeof sms === 'boolean' ? sms : (user.preferences.notifications?.sms ?? false),
+        };
+        user.updatedAt = Date.now();
+        await user.save();
+
+        return res.json({
+            success: true,
+            message: 'Notification settings updated.',
+            notifications: user.preferences.notifications,
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const getActiveSessions = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+        const sessions = (user.activeSessions || []).map((session) => ({
+            sessionId: session.sessionId,
+            ip: session.ip,
+            browser: session.browser,
+            os: session.os,
+            device: session.device,
+            lastLogin: session.lastLogin,
+            isCurrent: req.sessionId ? session.sessionId === req.sessionId : false,
+        }));
+
+        return res.json({ success: true, sessions });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const revokeSession = async (req, res) => {
+    const { sessionId } = req.params;
+
+    try {
+        const user = await User.findById(req.user._id);
+        const hasSession = (user.activeSessions || []).some((session) => session.sessionId === sessionId);
+
+        if (!hasSession) {
+            return res.status(404).json({ success: false, message: 'Session not found.' });
+        }
+
+        user.activeSessions = (user.activeSessions || []).filter((session) => session.sessionId !== sessionId);
+        await user.save();
+
+        if (req.sessionId && sessionId === req.sessionId) {
+            res.clearCookie('token', {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'
+            });
+        }
+
+        return res.json({ success: true, message: 'Session revoked successfully.' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const revokeOtherSessions = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+        const currentSessionId = req.sessionId || null;
+
+        if (!currentSessionId) {
+            user.activeSessions = [];
+        } else {
+            user.activeSessions = (user.activeSessions || []).filter(
+                (session) => session.sessionId === currentSessionId
+            );
+        }
+
+        await user.save();
+        return res.json({ success: true, message: 'All other sessions revoked.' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const setupTwoFactor = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+        const secret = speakeasy.generateSecret({ name: `Coookiebot (${user.email})` });
+
+        user.settings = user.settings || {};
+        user.settings.twoFactorTempSecret = secret.base32;
+        await user.save();
+
+        const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(secret.otpauth_url)}`;
+
+        return res.json({
+            success: true,
+            message: 'Two-factor setup initiated. Verify code to enable.',
+            secretBase32: secret.base32,
+            otpauthUrl: secret.otpauth_url,
+            qrCodeUrl,
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const verifyEnableTwoFactor = async (req, res) => {
+    const { token } = req.body;
+
+    if (!token) {
+        return res.status(400).json({ success: false, message: 'Verification code is required.' });
+    }
+
+    try {
+        const user = await User.findById(req.user._id);
+        const tempSecret = user.settings?.twoFactorTempSecret;
+
+        if (!tempSecret) {
+            return res.status(400).json({ success: false, message: '2FA setup is not initialized.' });
+        }
+
+        const verified = speakeasy.totp.verify({
+            secret: tempSecret,
+            encoding: 'base32',
+            token: String(token),
+            window: 1,
+        });
+
+        if (!verified) {
+            return res.status(400).json({ success: false, message: 'Invalid authenticator code.' });
+        }
+
+        user.settings.twoFactorSecret = tempSecret;
+        user.settings.twoFactorEnabled = true;
+        user.settings.twoFactorTempSecret = '';
+        await user.save();
+
+        return res.json({ success: true, message: 'Two-factor authentication enabled successfully.' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const disableTwoFactor = async (req, res) => {
+    const { token } = req.body;
+
+    if (!token) {
+        return res.status(400).json({ success: false, message: 'Verification code is required.' });
+    }
+
+    try {
+        const user = await User.findById(req.user._id);
+        const secret = user.settings?.twoFactorSecret;
+
+        if (!user.settings?.twoFactorEnabled || !secret) {
+            return res.status(400).json({ success: false, message: 'Two-factor authentication is not enabled.' });
+        }
+
+        const verified = speakeasy.totp.verify({
+            secret,
+            encoding: 'base32',
+            token: String(token),
+            window: 1,
+        });
+
+        if (!verified) {
+            return res.status(400).json({ success: false, message: 'Invalid authenticator code.' });
+        }
+
+        user.settings.twoFactorEnabled = false;
+        user.settings.twoFactorSecret = '';
+        user.settings.twoFactorTempSecret = '';
+        await user.save();
+
+        return res.json({ success: true, message: 'Two-factor authentication disabled.' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const suspendAccount = async (req, res) => {
+    const { months } = req.body;
+    const parsedMonths = Number(months);
+
+    if (!Number.isInteger(parsedMonths) || parsedMonths < 1 || parsedMonths > 36) {
+        return res.status(400).json({ success: false, message: 'Suspension duration must be between 1 and 36 months.' });
+    }
+
+    try {
+        const user = await User.findById(req.user._id);
+        const suspendedUntil = new Date();
+        suspendedUntil.setMonth(suspendedUntil.getMonth() + parsedMonths);
+
+        user.accountStatus = user.accountStatus || {};
+        user.accountStatus.isSuspended = true;
+        user.accountStatus.suspendedUntil = suspendedUntil;
+        user.activeSessions = [];
+
+        await user.save();
+
+        res.clearCookie('token', {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'
+        });
+
+        return res.json({ success: true, message: `Account suspended until ${suspendedUntil.toISOString()}.` });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const deleteAccount = async (req, res) => {
+    const { password } = req.body;
+
+    if (!password) {
+        return res.status(400).json({ success: false, message: 'Password is required to delete account.' });
+    }
+
+    try {
+        const user = await User.findById(req.user._id);
+        const validPassword = await bcrypt.compare(password, user.password);
+
+        if (!validPassword) {
+            return res.status(400).json({ success: false, message: 'Password is incorrect.' });
+        }
+
+        await User.deleteOne({ _id: user._id });
+
+        res.clearCookie('token', {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'
+        });
+
+        return res.json({ success: true, message: 'Account deleted successfully.' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const requireAdmin = async (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    }
+
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Admin access required.' });
+    }
+
+    next();
+};
+
+const requireTradingApproval = async (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    }
+
+    if (!isUserApproved(req.user)) {
+        return res.status(403).json({
+            success: false,
+            message: 'Account approval is pending. Trading is disabled until an admin approves your account.',
+        });
+    }
+
+    next();
+};
+
+module.exports = {
+    register,
+    login,
+    logout,
+    sendVerifyOtp,
+    verifyEmail,
+    sendResetOtp,
+    resetPassword,
+    isAuthenticated,
+    requireAdmin,
+    requireTradingApproval,
+    me,
+    sendVerifyOtpChangingEmails,
+    verifyOTPChangeEmail,
+    updatePassword,
+    updateProfile,
+    updateNotificationPreferences,
+    getActiveSessions,
+    revokeSession,
+    revokeOtherSessions,
+    setupTwoFactor,
+    verifyEnableTwoFactor,
+    disableTwoFactor,
+    suspendAccount,
+    deleteAccount,
+};

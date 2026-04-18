@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 
 const BotSchema = new mongoose.Schema({
-    // user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 
     // General bot info
     botName: { type: String, required: true, unique: true }, // e.g. "Smart Bot V1"

@@ -9,6 +9,9 @@ const {
     updateExchange,
     getExchangeActivity,
 } = require('../controllers/exchangeController');
+const { isAuthenticated } = require('../controllers/authController');
+
+router.use(isAuthenticated);
 
 // --- API ROUTES ---
 

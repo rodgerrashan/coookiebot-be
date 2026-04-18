@@ -12,6 +12,8 @@ const { validateRiskRewardRatioInput } = require('../utils/riskRewardRatio');
 const { startBot, stopBot } = require('../services/botServices')
 const { makelogbot } = require('../services/logsBotsServices');
 
+const isOwnerOrUnassigned = (ownerUserId, user) => !ownerUserId || String(ownerUserId) === String(user?._id || '');
+
 
 // 🟢 Create a new bot
 exports.createBot = async (req, res) => {
@@ -72,6 +74,7 @@ exports.createBot = async (req, res) => {
     });
 
     const newBot = new Bot({
+      userId: req.user?._id,
       botName,
       exchange: {
         _id: exchangeRecord._id,
@@ -142,7 +145,8 @@ exports.createBot = async (req, res) => {
 // 📄 Get all bots
 exports.getBots = async (req, res) => {
   try {
-    const bots = await Bot.find({});
+    const query = req.user?.role === 'admin' ? {} : { userId: req.user?._id };
+    const bots = await Bot.find(query);
     res.status(200).json(bots);
   } catch (error) {
     res.status(500).json({ message: "Error fetching bots", error: error.message });
@@ -153,10 +157,14 @@ exports.getBots = async (req, res) => {
 exports.getBotById = async (req, res) => {
   try {
     const bot = await Bot.findById(req.params.id);
+    if (!bot) return res.status(404).json({ message: "Bot not found" });
+
+    if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(bot.userId, req.user)) {
+      return res.status(403).json({ message: 'You are not allowed to view this bot.' });
+    }
+
     const ex = await Exchange.findById(bot.exchange._id.toString());
     const exchange = ex ? ex.name : "Unknown";
-
-    if (!bot) return res.status(404).json({ message: "Bot not found" });
 
 
     // send bot data botMode, botName, cooldownPeriod, createdAt, investment, isTestMode,status,strategy, timeframe,tradingPair,updatedAt
@@ -214,6 +222,13 @@ exports.updateBot = async (req, res) => {
       req.body.riskRewardRatio = ratioValidation.normalized;
     }
 
+    const bot = await Bot.findById(req.params.id);
+    if (!bot) return res.status(404).json({ message: "Bot not found" });
+
+    if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(bot.userId, req.user)) {
+      return res.status(403).json({ message: 'You are not allowed to update this bot.' });
+    }
+
     const updatedBot = await Bot.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!updatedBot) return res.status(404).json({ message: "Bot not found" });
 
@@ -230,6 +245,13 @@ exports.updateBot = async (req, res) => {
 // ❌ Delete bot
 exports.deleteBot = async (req, res) => {
   try {
+    const bot = await Bot.findById(req.params.id);
+    if (!bot) return res.status(404).json({ message: "Bot not found" });
+
+    if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(bot.userId, req.user)) {
+      return res.status(403).json({ message: 'You are not allowed to delete this bot.' });
+    }
+
     const deleted = await Bot.findByIdAndDelete(req.params.id);
     if (!deleted) return res.status(404).json({ message: "Bot not found" });
 
@@ -247,8 +269,18 @@ exports.deleteBot = async (req, res) => {
 // ▶️ Start bot
 exports.startBot = async (req, res) => {
   try {
+    if (req.user?.approvalStatus && req.user.approvalStatus !== 'approved') {
+      return res.status(403).json({
+        message: 'Account approval is pending. Trading is disabled until an admin approves your account.',
+      });
+    }
+
     const bot = await Bot.findById(req.params.id);
     if (!bot) return res.status(404).json({ message: "Bot not found" });
+
+    if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(bot.userId, req.user)) {
+      return res.status(403).json({ message: 'You are not allowed to start this bot.' });
+    }
 
     const exchange = await Exchange.findById(bot.exchange._id.toString());
     if (!exchange) return res.status(404).json({ message: "Exchange not found" });
@@ -280,6 +312,10 @@ exports.stopBot = async (req, res) => {
     const bot = await Bot.findById(req.params.id);
     if (!bot) return res.status(404).json({ message: "Bot not found" });
 
+    if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(bot.userId, req.user)) {
+      return res.status(403).json({ message: 'You are not allowed to stop this bot.' });
+    }
+
     stopBot(bot._id);
 
     bot.status = "stopped";
@@ -299,6 +335,9 @@ exports.getBotStatus = async (req, res) => {
     const bot = await Bot.findById(req.params.id);
 
     if (!bot) return res.status(404).json({ message: "Bot not found" });
+    if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(bot.userId, req.user)) {
+      return res.status(403).json({ message: 'You are not allowed to view this bot status.' });
+    }
     res.status(200).json({ status: bot.status });
   } catch (error) {
     res.status(500).json({ message: "Error fetching bot status", error: error.message });
@@ -310,6 +349,12 @@ exports.getBotStatus = async (req, res) => {
 exports.getBotLogs = async (req, res) => {
   try {
     const botId = req.params.id;
+    const bot = await Bot.findById(botId);
+    if (!bot) return res.status(404).json({ message: "Bot not found" });
+
+    if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(bot.userId, req.user)) {
+      return res.status(403).json({ message: 'You are not allowed to view these bot logs.' });
+    }
 
     const logs = await LogBot.find({ botId: botId }).sort({ timestamp: -1 });
     res.status(200).json(logs);
@@ -323,6 +368,12 @@ exports.getBotLogs = async (req, res) => {
 exports.getBotCandles = async (req, res) => {
   try {
     const botId = req.params.id;
+    const bot = await Bot.findById(botId);
+    if (!bot) return res.status(404).json({ message: "Bot not found" });
+
+    if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(bot.userId, req.user)) {
+      return res.status(403).json({ message: 'You are not allowed to view these bot candles.' });
+    }
 
     // 1. Fetch from DB (sorted newest → oldest)
     const originalCandles = await Candle.find({ botId })
@@ -342,6 +393,13 @@ exports.getBotCandles = async (req, res) => {
 // get Markers from TradingMarker collection
 exports.getMarkers = async (req, res) => {
   try {
+    const bot = await Bot.findById(req.params.id);
+    if (!bot) return res.status(404).json({ message: "Bot not found" });
+
+    if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(bot.userId, req.user)) {
+      return res.status(403).json({ message: 'You are not allowed to view these markers.' });
+    }
+
     const markers = await TradingMarker.find({ botId: req.params.id });
     // logger.debug("[MARKERS] Fetched markers:", markers);
     res.status(200).json(markers);

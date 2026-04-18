@@ -21,6 +21,11 @@ const activityEntrySchema = new mongoose.Schema({
 }, { _id: false });
 
 const exchangeSchema = new mongoose.Schema({
+    userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null,
+    },
     platform: {
         type: String,
         required: true,

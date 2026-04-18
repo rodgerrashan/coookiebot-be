@@ -4,6 +4,8 @@ const { encrypt } = require('../utils/encryptions');
 const logger = require('../utils/logger');
 const { getExchangeProvider } = require('../services/exchanges/factory');
 
+const isOwnerOrUnassigned = (ownerUserId, user) => !ownerUserId || String(ownerUserId) === String(user?._id || '');
+
 const MAX_ACTIVITY_ITEMS = 50;
 
 function toMaskedValue(value) {
@@ -57,7 +59,8 @@ function pushActivity(exchange, entry) {
 // --- GET: Fetch all exchanges ---
 exports.getAllExchanges = async (req, res) => {
     try {
-        const exchanges = await Exchange.find(); // Filter by user later
+        const query = req.user?.role === 'admin' ? {} : { userId: req.user?._id };
+        const exchanges = await Exchange.find(query);
 
         res.status(200).json(exchanges.map((ex) => serializeExchange(ex)));
     } catch (error) {
@@ -100,6 +103,7 @@ exports.createExchange = async (req, res) => {
         });
 
         const newExchange = new Exchange({
+            userId: req.user?._id,
             platform: normalizedPlatform,
             name,
             apiToken: encryptedToken,
@@ -141,6 +145,10 @@ exports.deleteExchange = async (req, res) => {
             return res.status(404).json({ message: 'Exchange connection not found.' });
         }
 
+        if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(exchange.userId, req.user)) {
+            return res.status(403).json({ message: 'You are not allowed to delete this exchange.' });
+        }
+
         const deletedName = exchange.name;
         await exchange.deleteOne();
         logger.info(`[INFO] Exchange connection deleted: ${deletedName}`);
@@ -161,6 +169,10 @@ exports.checkExchangeStatus = async (req, res) => {
         const exchange = await Exchange.findById(req.params.id);
         if (!exchange) {
             return res.status(404).json({ message: 'Exchange not found.' });
+        }
+
+        if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(exchange.userId, req.user)) {
+            return res.status(403).json({ message: 'You are not allowed to access this exchange.' });
         }
 
         logger.info(`[INFO] Checking connection for exchange: ${exchange.name}`);
@@ -219,6 +231,10 @@ exports.getExchangeById = async (req, res) => {
             logger.warn('[WARN] Exchange not found with ID:', req.params.id);
             return res.status(404).json({ message: 'Exchange not found.' });
         }
+
+        if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(exchange.userId, req.user)) {
+            return res.status(403).json({ message: 'You are not allowed to access this exchange.' });
+        }
         res.status(200).json(serializeExchange(exchange));
     } catch (error) {
         logger.error('[ERROR] Error fetching exchange:', error);
@@ -234,6 +250,10 @@ exports.updateExchange = async (req, res) => {
         const exchange = await Exchange.findById(req.params.id);
         if (!exchange) {
             return res.status(404).json({ message: 'Exchange not found.' });
+        }
+
+        if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(exchange.userId, req.user)) {
+            return res.status(403).json({ message: 'You are not allowed to update this exchange.' });
         }
 
         if (name && name !== exchange.name) {
@@ -295,6 +315,10 @@ exports.getExchangeActivity = async (req, res) => {
         const exchange = await Exchange.findById(req.params.id);
         if (!exchange) {
             return res.status(404).json({ message: 'Exchange not found.' });
+        }
+
+        if (req.user?.role !== 'admin' && !isOwnerOrUnassigned(exchange.userId, req.user)) {
+            return res.status(403).json({ message: 'You are not allowed to access this exchange activity.' });
         }
 
         const items = Array.isArray(exchange.activityLog) ? [...exchange.activityLog].reverse() : [];

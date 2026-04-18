@@ -27,6 +27,7 @@ const mongoose = require("mongoose");
 const Bot = require("../models/Bot");
 const Exchange = require("../models/Exchange");
 const TradingMarker = require("../models/TradingMarker");
+const User = require("../models/User").default;
 
 
 
@@ -511,6 +512,14 @@ const startAllBots = async () => {
   try {
     const bots = await Bot.find({ status: "active" });
     for (const bot of bots) {
+      if (bot.userId) {
+        const user = await User.findById(bot.userId).select('approvalStatus');
+        if (!user || (user.approvalStatus && user.approvalStatus !== 'approved')) {
+          logger.warn(`[BOT] Skipping auto-start for ${bot.botName}: owner account is not approved`);
+          continue;
+        }
+      }
+
       const exchange = await Exchange.findById(bot.exchange._id.toString());
       if (exchange) {
         if (String(exchange.platform || '').toLowerCase() !== 'deriv') {

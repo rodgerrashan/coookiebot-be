@@ -14,6 +14,7 @@ const candleRoutes = require('./routes/candleRoutes');
 const authRouter = require('./routes/authRoutes');
 const botRoutes = require('./routes/botsRoutes');
 const playgroundRoutes = require('./routes/playgroundRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 
 const { startAllBots } = require('./services/botServices');
 
@@ -106,6 +107,7 @@ app.use('/api', candleRoutes);
 app.use('/api/auth', authRouter);
 app.use('/api/bots', botRoutes);
 app.use('/api/playground', playgroundRoutes);
+app.use('/api/admin', adminRoutes);
 
 
 // Add Health check endpoint

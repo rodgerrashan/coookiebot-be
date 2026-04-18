@@ -10,16 +10,37 @@ const userScheme = new Schema({
     verifyOtp: { type: String, default: '' },
     verifyOtpExpireAt: { type: Number, default: 0 },
     isAccountVerified: { type: Boolean, default: false },
+    role: {
+        type: String,
+        enum: ['user', 'admin'],
+        default: 'user',
+    },
+    approvalStatus: {
+        type: String,
+        enum: ['pending', 'approved', 'rejected'],
+        default: 'pending',
+    },
+    approvedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    approvedAt: { type: Date, default: null },
+    rejectedAt: { type: Date, default: null },
+    rejectionReason: { type: String, default: '' },
+    approvalRequestedAt: { type: Date, default: Date.now },
     resetOtp: { type: String, default: '' },
     resetOtpExpiredAt: { type: Number, default: 0 },
     profilePicture: { type: String, default: 'https://www.gravatar.com/avatar/?d=mp&s=200' },
     preferences: {
         theme: { type: String, default: 'light' },
         language: { type: String, default: 'en' },
-        notifications: { type: Boolean, default: true }
+        notifications: {
+            email: { type: Boolean, default: true },
+            push: { type: Boolean, default: true },
+            sms: { type: Boolean, default: false }
+        }
     },
     settings: {
-        twoFactorEnabled: { type: Boolean, default: false }
+        twoFactorEnabled: { type: Boolean, default: false },
+        twoFactorSecret: { type: String, default: '' },
+        twoFactorTempSecret: { type: String, default: '' }
     },
     lastSession: {
         ip: String,
@@ -27,6 +48,20 @@ const userScheme = new Schema({
         os: String,
         device: String,
         lastLogin: { type: Date, default: Date.now }
+    },
+    activeSessions: [
+        {
+            sessionId: { type: String, required: true },
+            ip: String,
+            browser: String,
+            os: String,
+            device: String,
+            lastLogin: { type: Date, default: Date.now }
+        }
+    ],
+    accountStatus: {
+        isSuspended: { type: Boolean, default: false },
+        suspendedUntil: { type: Date, default: null }
     },
     willchangeEmail: { type: String },
     willchangeEmailOTP: { type: String },
