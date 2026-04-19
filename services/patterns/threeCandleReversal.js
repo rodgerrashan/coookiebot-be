@@ -2,10 +2,14 @@
 // Exact Node.js clone of your Pine Script "3-Candle Pattern Detector with SL/TP (1:3 RR, Entry = 4th Candle Open)"
 
 const normalizeCandle = require('./normalizeCandle');
+const { resolveRewardMultiplier, formatRiskReward } = require('./riskReward');
 
-function threeCandleReversal(candles) {
+function threeCandleReversal(candles, options = {}) {
     // We need at least 3 completed candles + the current (4th) open
     if (!candles || candles.length < 4) return null;
+
+    const bearishRewardMultiplier = resolveRewardMultiplier(options.riskRewardRatio, 2);
+    const bullishRewardMultiplier = resolveRewardMultiplier(options.riskRewardRatio, 3);
 
     // Map candles: [3] = oldest, [0] = current (4th candle, entry)
     const c3 = normalizeCandle(candles[candles.length - 4]); // candle 1 (trend)
@@ -37,7 +41,7 @@ function threeCandleReversal(candles) {
         const entry = o4;
         const sl = h2;
         const risk = sl - entry;
-        const tp = entry - (risk * 2);
+        const tp = entry - (risk * bearishRewardMultiplier);
 
         return {
             signal: 'SELL',
@@ -45,7 +49,7 @@ function threeCandleReversal(candles) {
             entryPrice: parseFloat(entry.toFixed(5)),
             stopLoss: parseFloat(sl.toFixed(5)),
             takeProfit: parseFloat(tp.toFixed(5)),
-            riskReward: '1:2',
+            riskReward: formatRiskReward(bearishRewardMultiplier),
             entryOnCandle: '4th open',
             timestamp: c0.timestamp || new Date().toISOString(),
             details: {
@@ -71,7 +75,7 @@ function threeCandleReversal(candles) {
         const entry = o4;
         const sl = l2;
         const risk = entry - sl;
-        const tp = entry + (risk * 3);
+        const tp = entry + (risk * bullishRewardMultiplier);
 
         return {
             signal: 'BUY',
@@ -79,7 +83,7 @@ function threeCandleReversal(candles) {
             entryPrice: parseFloat(entry.toFixed(5)),
             stopLoss: parseFloat(sl.toFixed(5)),
             takeProfit: parseFloat(tp.toFixed(5)),
-            riskReward: '1:3',
+            riskReward: formatRiskReward(bullishRewardMultiplier),
             entryOnCandle: '4th open',
             timestamp: c0.timestamp || new Date().toISOString(),
             details: {

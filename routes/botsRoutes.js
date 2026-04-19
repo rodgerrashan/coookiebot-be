@@ -13,10 +13,18 @@ const {
   getBotLogs,
   getBotCandles,
   getMarkers,
+  getBotsSummary,
+  getDashboardSummary,
 } = require('../controllers/botController');
+const { isAuthenticated, requireTradingApproval } = require('../controllers/authController');
+
+router.use(isAuthenticated);
 
 router.post('/', createBot);
 router.get('/', getBots);
+
+router.get('/summary', getBotsSummary);
+router.get('/dashboard', getDashboardSummary);
 
 
 router.get('/:id', getBotById);
@@ -24,7 +32,7 @@ router.put('/:id', updateBot);
 router.delete('/:id', deleteBot);
 
 
-router.post('/:id/start', startBot);
+router.post('/:id/start', requireTradingApproval, startBot);
 router.post('/:id/stop', stopBot);
 router.get('/:id/status', getBotStatus);
 

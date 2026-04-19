@@ -5,6 +5,12 @@ const cors = require('cors');
 require('dotenv').config();
 const cookie_parser = require('cookie-parser');
 const http = require('http');
+const dns = require('dns');
+
+dns.setServers([
+    '1.1.1.1',
+    '8.8.8.8'
+])
 
 const {initWebSocket} = require('./ws/socket');
 
@@ -14,6 +20,7 @@ const candleRoutes = require('./routes/candleRoutes');
 const authRouter = require('./routes/authRoutes');
 const botRoutes = require('./routes/botsRoutes');
 const playgroundRoutes = require('./routes/playgroundRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 
 const { startAllBots } = require('./services/botServices');
 
@@ -35,11 +42,18 @@ const PORT = process.env.PORT || 5005;
 
 const isProd = process.env.NODE_ENV === 'production';
 
-const allowedOrigins = isProd
-    ? [
-        'https://www.coookietrade.online',
-        'https://coookietrade.online'
-    ]
+const envAllowedOrigins = (process.env.FRONTEND_URLS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+const allowedOrigins = envAllowedOrigins.length > 0
+    ? envAllowedOrigins
+    : isProd
+        ? [
+            'https://www.coookietrade.online',
+            'https://coookietrade.online'
+        ]
     : [
         'http://localhost:5173',
         'http://127.0.0.1:5173',
@@ -66,11 +80,7 @@ const corsOptions = {
 
 
 
-// TEMP for testing
-app.use(cors({
-    origin: true,
-    credentials: true
-}));
+app.use(cors(isProd ? corsOptions : { origin: true, credentials: true }));
 app.use(express.json());
 app.use(cookie_parser());
 
@@ -106,6 +116,7 @@ app.use('/api', candleRoutes);
 app.use('/api/auth', authRouter);
 app.use('/api/bots', botRoutes);
 app.use('/api/playground', playgroundRoutes);
+app.use('/api/admin', adminRoutes);
 
 
 // Add Health check endpoint
