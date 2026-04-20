@@ -17,7 +17,7 @@ const playgroundRoutes = require('./routes/playgroundRoutes');
 
 const { startAllBots } = require('./services/botServices');
 
-const { default: connectDB } = require('./config/db');
+const connectDB = require('./config/db');
 const logger = require('./utils/logger');
 
 

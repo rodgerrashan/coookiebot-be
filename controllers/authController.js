@@ -1,8 +1,8 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const User = require('../models/User').default;
+const User = require('../models/User');
 const transporter = require('../mail/mail.config');
-const { default: mongoose } = require('mongoose');
+const mongoose = require('mongoose');
 const logger = require('../utils/logger');
 const { getSessionDetails } = require('../services/userServices');
 
