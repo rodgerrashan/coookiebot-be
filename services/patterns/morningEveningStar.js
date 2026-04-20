@@ -1,9 +1,12 @@
 // import normalizeCandle from './normalizeCandle';
 const normalizeCandle = require('./normalizeCandle');
+const { resolveRewardMultiplier, formatRiskReward } = require('./riskReward');
 
 
-function morningEveningStar(candles) {
+function morningEveningStar(candles, options = {}) {
     if (candles.length < 3) return null;
+
+    const rewardMultiplier = resolveRewardMultiplier(options.riskRewardRatio, 3);
 
     const c2 = normalizeCandle(candles[candles.length - 3]);
     const c1 = normalizeCandle(candles[candles.length - 2]);  // star
@@ -22,7 +25,7 @@ function morningEveningStar(candles) {
 
         const entry = c0.close;
         const sl = c1.high;                    // EXACTLY like Pine
-        const tp = entry - (sl - entry) * 3;
+        const tp = entry - (sl - entry) * rewardMultiplier;
 
 
         return {
@@ -31,7 +34,7 @@ function morningEveningStar(candles) {
             entryPrice: parseFloat(entry.toFixed(5)),
             stopLoss: parseFloat(sl.toFixed(5)),
             takeProfit: parseFloat(tp.toFixed(5)),
-            riskReward: '1:3',
+            riskReward: formatRiskReward(rewardMultiplier),
             entryOnNextCandle: true
         };
     }
@@ -45,7 +48,7 @@ function morningEveningStar(candles) {
 
         const entry = c0.close;
         const sl = c1.low;                     // EXACTLY like Pine
-        const tp = entry + (entry - sl) * 3;
+        const tp = entry + (entry - sl) * rewardMultiplier;
 
 
         return {
@@ -54,7 +57,7 @@ function morningEveningStar(candles) {
             entryPrice: parseFloat(entry.toFixed(5)),
             stopLoss: parseFloat(sl.toFixed(5)),
             takeProfit: parseFloat(tp.toFixed(5)),
-            riskReward: '1:3',
+            riskReward: formatRiskReward(rewardMultiplier),
             entryOnNextCandle: true
         };
     }
