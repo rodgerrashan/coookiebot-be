@@ -9,6 +9,15 @@ resource "aws_lightsail_instance" "node_server" {
   blueprint_id      = "ubuntu_22_04"
   bundle_id         = var.bundle_id
   key_pair_name     = var.key_pair_name
+  user_data = templatefile("${path.module}/scripts/bootstrap.sh.tftpl", {
+    domain_name     = var.domain_name
+    certbot_email   = var.certbot_email
+    certbot_enabled = var.certbot_enabled
+    app_port        = var.app_port
+    app_user        = var.app_user
+    app_base_dir    = var.app_base_dir
+    node_major      = var.node_major
+  })
 
   tags = {
     Environment = var.environment

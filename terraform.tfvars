@@ -1,0 +1,28 @@
+# Copy this file to terraform.tfvars and update values for your environment.
+
+aws_region        = "ap-south-1"
+availability_zone = "ap-south-1a"
+environment       = "production"
+instance_name     = "node-backend-server"
+bundle_id         = "nano_3_1"
+
+# Must match an existing Lightsail key pair name in your AWS account.
+key_pair_name = "cb"
+
+# Keep open only if you explicitly want public SSH.
+ssh_allowed_cidr = "0.0.0.0/0"
+
+# Public DNS that will point to the Lightsail static IP.
+domain_name = "api.coookietrade.online"
+
+# Email used for Let's Encrypt notifications.
+certbot_email = "rodrasjay@gmail.com"
+
+# Enables certbot install and retry automation.
+certbot_enabled = true
+
+# Backend runtime defaults.
+app_port     = 5005
+app_user     = "appsvc"
+app_base_dir = "/opt/coookiebot-be"
+node_major   = "20"

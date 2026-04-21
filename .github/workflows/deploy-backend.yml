@@ -1,0 +1,62 @@
+name: Deploy Backend
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build deployment archive
+        run: |
+          tar \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='.env' \
+            --exclude='.terraform' \
+            --exclude='terraform.tfstate' \
+            --exclude='terraform.tfstate.backup' \
+            -czf backend.tar.gz .
+
+      - name: Copy archive to Lightsail
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ${{ secrets.LIGHTSAIL_USER }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          source: backend.tar.gz
+          target: /tmp
+
+      - name: Deploy and restart service
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ${{ secrets.LIGHTSAIL_USER }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            APP_BASE_DIR="/opt/coookiebot-be"
+            RELEASE_DIR="$APP_BASE_DIR/releases/${{ github.sha }}"
+
+            sudo mkdir -p "$APP_BASE_DIR/releases"
+            sudo mkdir -p "$RELEASE_DIR"
+            sudo tar -xzf /tmp/backend.tar.gz -C "$RELEASE_DIR"
+            sudo rm -f /tmp/backend.tar.gz
+            sudo chown -R appsvc:appsvc "$RELEASE_DIR"
+
+            cd "$RELEASE_DIR"
+            sudo -u appsvc npm ci --omit=dev
+
+            sudo ln -sfn "$RELEASE_DIR" "$APP_BASE_DIR/current"
+            sudo systemctl restart coookiebot
+
+      - name: Health check
+        run: |
+          curl -fsS https://api.coookietrade.online/health

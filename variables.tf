@@ -39,3 +39,45 @@ variable "ssh_allowed_cidr" {
   type        = string
   default     = "0.0.0.0/0"
 }
+
+variable "domain_name" {
+  description = "Public domain that points to the Lightsail static IP"
+  type        = string
+  default     = "api.coookietrade.online"
+}
+
+variable "certbot_email" {
+  description = "Email address used by Let's Encrypt for certificate notices"
+  type        = string
+  default     = "rodrasjay@gmail.com"
+}
+
+variable "certbot_enabled" {
+  description = "Enable automated certificate issuance/retry with certbot"
+  type        = bool
+  default     = true
+}
+
+variable "app_port" {
+  description = "Internal Node.js backend listening port"
+  type        = number
+  default     = 5005
+}
+
+variable "app_user" {
+  description = "Linux user that runs the backend service"
+  type        = string
+  default     = "appsvc"
+}
+
+variable "app_base_dir" {
+  description = "Base directory for app releases/current symlink"
+  type        = string
+  default     = "/opt/coookiebot-be"
+}
+
+variable "node_major" {
+  description = "Node.js major version installed on the instance"
+  type        = string
+  default     = "20"
+}

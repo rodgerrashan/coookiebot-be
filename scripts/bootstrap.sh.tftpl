@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+
+DOMAIN_NAME="${domain_name}"
+CERTBOT_EMAIL="${certbot_email}"
+CERTBOT_ENABLED="${certbot_enabled}"
+APP_PORT="${app_port}"
+APP_USER="${app_user}"
+APP_BASE_DIR="${app_base_dir}"
+NODE_MAJOR="${node_major}"
+SERVICE_NAME="coookiebot"
+ENV_FILE="/etc/coookiebot-be.env"
+
+log() {
+  echo "[bootstrap] $1"
+}
+
+log "Updating apt repositories"
+apt-get update -y
+apt-get upgrade -y
+
+log "Installing OS packages"
+apt-get install -y ca-certificates curl gnupg git nginx certbot python3-certbot-nginx
+
+if ! command -v node >/dev/null 2>&1; then
+  log "Installing Node.js $NODE_MAJOR"
+  curl -fsSL "https://deb.nodesource.com/setup_${node_major}.x" | bash -
+  apt-get install -y nodejs
+fi
+
+if ! id -u "$APP_USER" >/dev/null 2>&1; then
+  log "Creating app user $APP_USER"
+  useradd --system --create-home --shell /bin/bash "$APP_USER"
+fi
+
+log "Preparing app directories"
+mkdir -p "$APP_BASE_DIR/current" "$APP_BASE_DIR/releases" "$APP_BASE_DIR/shared"
+chown -R "$APP_USER:$APP_USER" "$APP_BASE_DIR"
+
+if [ ! -f "$ENV_FILE" ]; then
+  log "Creating default environment file at $ENV_FILE"
+  cat > "$ENV_FILE" <<EOF
+NODE_ENV=production
+PORT=$APP_PORT
+# FRONTEND_URLS=https://coookietrade.online,https://www.coookietrade.online
+# MONGO_URI=
+# JWT_SECRET=
+EOF
+  chmod 600 "$ENV_FILE"
+fi
+
+log "Creating systemd service"
+cat > "/etc/systemd/system/$SERVICE_NAME.service" <<EOF
+[Unit]
+Description=Coookiebot Backend Service
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=$APP_BASE_DIR/current/package.json
+
+[Service]
+Type=simple
+User=$APP_USER
+Group=$APP_USER
+WorkingDirectory=$APP_BASE_DIR/current
+EnvironmentFile=$ENV_FILE
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable "$SERVICE_NAME.service"
+systemctl restart "$SERVICE_NAME.service" || true
+
+log "Configuring nginx reverse proxy"
+cat > /etc/nginx/sites-available/coookiebot.conf <<EOF
+map \$http_upgrade \$connection_upgrade {
+  default upgrade;
+  ''      close;
+}
+
+server {
+  listen 80;
+  listen [::]:80;
+  server_name $DOMAIN_NAME;
+
+  client_max_body_size 10m;
+
+  location /.well-known/acme-challenge/ {
+    root /var/www/html;
+  }
+
+  location / {
+    proxy_pass http://127.0.0.1:$APP_PORT;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection \$connection_upgrade;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_read_timeout 300;
+  }
+}
+EOF
+
+rm -f /etc/nginx/sites-enabled/default
+ln -sfn /etc/nginx/sites-available/coookiebot.conf /etc/nginx/sites-enabled/coookiebot.conf
+nginx -t
+systemctl enable nginx
+systemctl restart nginx
+
+if [ "$CERTBOT_ENABLED" = "true" ]; then
+  log "Installing certificate helper"
+  cat > /usr/local/bin/ensure-cert.sh <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+DOMAIN_NAME="$DOMAIN_NAME"
+CERTBOT_EMAIL="$CERTBOT_EMAIL"
+
+if [ -f "/etc/letsencrypt/live/\$DOMAIN_NAME/fullchain.pem" ]; then
+  exit 0
+fi
+
+certbot --nginx --non-interactive --agree-tos --redirect -m "\$CERTBOT_EMAIL" -d "\$DOMAIN_NAME"
+systemctl reload nginx
+EOF
+
+  chmod +x /usr/local/bin/ensure-cert.sh
+
+  mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+  cat > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+systemctl reload nginx
+EOF
+  chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+
+  cat > /etc/systemd/system/ensure-cert.service <<EOF
+[Unit]
+Description=Ensure Let's Encrypt certificate exists for coookiebot
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ensure-cert.sh
+EOF
+
+  cat > /etc/systemd/system/ensure-cert.timer <<EOF
+[Unit]
+Description=Retry certificate issuance until success
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable --now ensure-cert.timer
+fi
+
+log "Bootstrap completed"
