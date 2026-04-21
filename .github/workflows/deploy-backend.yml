@@ -38,9 +38,17 @@ jobs:
             APP_USER="appsvc"
             APP_BASE_DIR="/opt/coookiebot-be"
             RELEASE_DIR="$APP_BASE_DIR/releases/${{ github.sha }}"
+            NODE_MAJOR="20"
 
             if ! id -u "$APP_USER" >/dev/null 2>&1; then
               sudo useradd --system --create-home --shell /bin/bash "$APP_USER"
+            fi
+
+            if ! command -v npm >/dev/null 2>&1; then
+              sudo apt-get update -y
+              sudo apt-get install -y ca-certificates curl gnupg
+              curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
+              sudo apt-get install -y nodejs
             fi
 
             sudo mkdir -p "$APP_BASE_DIR/releases"
