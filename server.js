@@ -14,7 +14,6 @@ dns.setServers([
 
 const {initWebSocket} = require('./ws/socket');
 
-
 const exchangeRoutes = require('./routes/exchangeRoutes');
 const candleRoutes = require('./routes/candleRoutes');
 const authRouter = require('./routes/authRoutes');
@@ -27,21 +26,22 @@ const { startAllBots } = require('./services/botServices');
 const connectDB = require('./config/db');
 const logger = require('./utils/logger');
 
-
 const app = express();
 const PORT = process.env.PORT || 5005;
 
 const corsOptions = {
-    origin: true,
+    origin: "https://app.coookietrade.online",
     credentials: true,
-    optionsSuccessStatus: 200
+    methods: ["GET","POST","PUT","DELETE","OPTIONS"],
+    allowedHeaders: ["Content-Type","Authorization"]
 };
+
 
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookie_parser());
 
-// 🧾 Request Logger Middleware
+// Request Logger Middleware
 app.use((req, res, next) => {
     const time = new Date().toLocaleString();
     logger.info(`[REQUEST] ${req.method} ${req.originalUrl}`);
