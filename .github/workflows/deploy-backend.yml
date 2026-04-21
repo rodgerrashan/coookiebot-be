@@ -16,14 +16,7 @@ jobs:
 
       - name: Build deployment archive
         run: |
-          tar \
-            --exclude='.git' \
-            --exclude='node_modules' \
-            --exclude='.env' \
-            --exclude='.terraform' \
-            --exclude='terraform.tfstate' \
-            --exclude='terraform.tfstate.backup' \
-            -czf backend.tar.gz .
+          git archive --format=tar.gz --output=backend.tar.gz HEAD
 
       - name: Copy archive to Lightsail
         uses: appleboy/scp-action@v0.1.7
