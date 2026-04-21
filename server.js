@@ -42,8 +42,10 @@ const PORT = process.env.PORT || 5005;
 
 const isProd = process.env.NODE_ENV === 'production';
 
-const envAllowedOrigins = (process.env.FRONTEND_URLS || '')
-    .split(',')
+const envAllowedOrigins = [
+    ...(process.env.FRONTEND_URLS || '').split(','),
+    process.env.FRONTEND_URL || ''
+]
     .map((origin) => origin.trim())
     .filter(Boolean);
 
@@ -51,6 +53,7 @@ const allowedOrigins = envAllowedOrigins.length > 0
     ? envAllowedOrigins
     : isProd
         ? [
+            'https://app.coookietrade.online',
             'https://www.coookietrade.online',
             'https://coookietrade.online'
         ]
