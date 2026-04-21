@@ -35,17 +35,22 @@ jobs:
           key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
           script: |
             set -euo pipefail
+            APP_USER="appsvc"
             APP_BASE_DIR="/opt/coookiebot-be"
             RELEASE_DIR="$APP_BASE_DIR/releases/${{ github.sha }}"
+
+            if ! id -u "$APP_USER" >/dev/null 2>&1; then
+              sudo useradd --system --create-home --shell /bin/bash "$APP_USER"
+            fi
 
             sudo mkdir -p "$APP_BASE_DIR/releases"
             sudo mkdir -p "$RELEASE_DIR"
             sudo tar -xzf /tmp/backend.tar.gz -C "$RELEASE_DIR"
             sudo rm -f /tmp/backend.tar.gz
-            sudo chown -R appsvc:appsvc "$RELEASE_DIR"
+            sudo chown -R "$APP_USER:$APP_USER" "$RELEASE_DIR"
 
             cd "$RELEASE_DIR"
-            sudo -u appsvc npm ci --omit=dev
+            sudo -u "$APP_USER" npm ci --omit=dev
 
             sudo ln -sfn "$RELEASE_DIR" "$APP_BASE_DIR/current"
             sudo systemctl restart coookiebot
