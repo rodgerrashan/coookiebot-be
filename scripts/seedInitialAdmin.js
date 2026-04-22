@@ -1,7 +1,15 @@
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const User = require('../models/User').default;
+const dns = require('dns');
+const User = require('../models/User');
+
+dns.setServers([
+  '1.1.1.1',
+  '8.8.8.8',
+]);
+
+const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
 
 function buildUserId(email) {
   const prefix = String(email || 'admin').split('@')[0].replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'admin';
@@ -10,8 +18,8 @@ function buildUserId(email) {
 }
 
 async function runSeed() {
-  if (!process.env.MONGO_URI) {
-    throw new Error('MONGO_URI is required to run seed.');
+  if (!mongoUri) {
+    throw new Error('MONGO_URI or MONGODB_URI is required to run seed.');
   }
 
   const email = process.env.INIT_ADMIN_EMAIL;
@@ -22,7 +30,7 @@ async function runSeed() {
     throw new Error('INIT_ADMIN_EMAIL and INIT_ADMIN_PASSWORD are required.');
   }
 
-  await mongoose.connect(process.env.MONGO_URI);
+  await mongoose.connect(mongoUri);
   console.log('[seed] Connected to MongoDB');
 
   const existingByEmail = await User.findOne({ email });
@@ -62,7 +70,13 @@ async function runSeed() {
 
 runSeed()
   .catch((error) => {
-    console.error('[seed] Failed:', error.message);
+    if (error?.message?.includes('querySrv') || error?.message?.includes('ENOTFOUND')) {
+      console.error('[seed] Failed: DNS/SRV resolution error. Check internet, VPN/firewall, and DNS settings.', error.message);
+    } else if (error?.message?.includes('Authentication failed')) {
+      console.error('[seed] Failed: MongoDB authentication error. Check username/password and auth database.', error.message);
+    } else {
+      console.error('[seed] Failed:', error.message);
+    }
     process.exitCode = 1;
   })
   .finally(async () => {

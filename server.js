@@ -29,8 +29,32 @@ const logger = require('./utils/logger');
 const app = express();
 const PORT = process.env.PORT || 5005;
 
+const normalizeOrigin = (origin) => origin.trim().replace(/\/$/, '');
+
+const defaultAllowedOrigins = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'https://app.coookietrade.online'
+].map(normalizeOrigin);
+
+const configuredOrigins = `${process.env.CORS_ORIGINS || ''},${process.env.FRONTEND_URL || ''}`
+    .split(',')
+    .map((origin) => normalizeOrigin(origin))
+    .filter(Boolean);
+
+const finalAllowedOrigins = [...new Set([...defaultAllowedOrigins, ...configuredOrigins])];
+
 const corsOptions = {
-    origin: "https://app.coookietrade.online",
+    origin: (origin, callback) => {
+        const requestOrigin = origin ? normalizeOrigin(origin) : '';
+
+        // Allow non-browser tools (e.g. curl/postman) and same-origin requests without Origin header
+        if (!requestOrigin || finalAllowedOrigins.includes(requestOrigin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error(`CORS blocked for origin: ${requestOrigin}`));
+    },
     credentials: true,
     methods: ["GET","POST","PUT","DELETE","OPTIONS"],
     allowedHeaders: ["Content-Type","Authorization"]

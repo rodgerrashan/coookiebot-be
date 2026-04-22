@@ -1,4 +1,4 @@
-const User = require('../models/User').default;
+const User = require('../models/User');
 const Bot = require('../models/Bot');
 const Exchange = require('../models/Exchange');
 

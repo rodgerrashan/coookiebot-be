@@ -27,7 +27,7 @@ const mongoose = require("mongoose");
 const Bot = require("../models/Bot");
 const Exchange = require("../models/Exchange");
 const TradingMarker = require("../models/TradingMarker");
-const User = require("../models/User").default;
+const User = require("../models/User");
 
 
 
