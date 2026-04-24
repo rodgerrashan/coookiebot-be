@@ -15,8 +15,8 @@ jobs:
       APP_BASE_DIR: /opt/coookiebot-be
       APP_USER: appsvc
       APP_PORT: 5005
-      SERVICE_NAME: coookiebot
       ENV_FILE: /etc/coookiebot-be.env
+      PM2_APP_NAME: coookiebot
       DOMAIN_NAME: api.coookietrade.online
       SSL_CERT_PATH: /etc/letsencrypt/live/api.coookietrade.online/fullchain.pem
       SSL_KEY_PATH: /etc/letsencrypt/live/api.coookietrade.online/privkey.pem
@@ -58,12 +58,12 @@ jobs:
       # 🔹 Setup server (first-time safe)
       - name: Run setup script
         run: |
-          ssh "ubuntu@$SERVER_IP" "sudo APP_BASE_DIR=$APP_BASE_DIR APP_USER=$APP_USER APP_PORT=$APP_PORT SERVICE_NAME=$SERVICE_NAME ENV_FILE=$ENV_FILE bash -s" < deploy/setup.sh
+          ssh "ubuntu@$SERVER_IP" "sudo APP_BASE_DIR=$APP_BASE_DIR APP_USER=$APP_USER APP_PORT=$APP_PORT ENV_FILE=$ENV_FILE bash -s" < deploy/setup.sh
 
       # 🔹 Deploy backend
       - name: Deploy app
         run: |
-          ssh "ubuntu@$SERVER_IP" "sudo APP_BASE_DIR=$APP_BASE_DIR APP_USER=$APP_USER SERVICE_NAME=$SERVICE_NAME SOURCE_TARBALL=/tmp/coookiebot-be.tgz bash -s" < deploy/deploy.sh
+          ssh "ubuntu@$SERVER_IP" "sudo APP_BASE_DIR=$APP_BASE_DIR APP_USER=$APP_USER ENV_FILE=$ENV_FILE PM2_APP_NAME=$PM2_APP_NAME SOURCE_TARBALL=/tmp/coookiebot-be.tgz bash -s" < deploy/deploy.sh
 
       # 🔹 SSL
       - name: Setup SSL

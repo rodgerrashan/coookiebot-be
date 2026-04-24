@@ -7,7 +7,6 @@ APP_PORT="${APP_PORT:-5005}"
 APP_USER="${APP_USER:-appsvc}"
 APP_BASE_DIR="${APP_BASE_DIR:-/opt/coookiebot-be}"
 NODE_MAJOR="${NODE_MAJOR:-20}"
-SERVICE_NAME="${SERVICE_NAME:-coookiebot}"
 ENV_FILE="${ENV_FILE:-/etc/coookiebot-be.env}"
 
 log() {
@@ -26,10 +25,25 @@ if ! command -v node >/dev/null 2>&1; then
 	apt-get install -y nodejs
 fi
 
+if ! command -v pm2 >/dev/null 2>&1; then
+	log "Installing PM2 globally"
+	npm install -g pm2
+fi
+
 if ! id -u "$APP_USER" >/dev/null 2>&1; then
 	log "Creating app user $APP_USER"
 	useradd --system --create-home --shell /bin/bash "$APP_USER"
 fi
+
+if systemctl list-unit-files | grep -q '^coookiebot\.service'; then
+	log "Disabling legacy coookiebot systemd service"
+	systemctl disable --now coookiebot.service || true
+	rm -f /etc/systemd/system/coookiebot.service
+	systemctl daemon-reload
+fi
+
+log "Configuring PM2 startup for user $APP_USER"
+env PATH="$PATH:/usr/bin:/usr/local/bin" pm2 startup systemd -u "$APP_USER" --hp "/home/$APP_USER" || true
 
 log "Preparing app directories"
 mkdir -p "$APP_BASE_DIR/current" "$APP_BASE_DIR/releases" "$APP_BASE_DIR/shared"
@@ -50,34 +64,6 @@ PORT=$APP_PORT
 EOF
 	chmod 600 "$ENV_FILE"
 fi
-
-log "Creating systemd service"
-cat > "/etc/systemd/system/$SERVICE_NAME.service" <<EOF
-[Unit]
-Description=Coookiebot Backend Service
-After=network-online.target
-Wants=network-online.target
-ConditionPathExists=$APP_BASE_DIR/current/package.json
-
-[Service]
-Type=simple
-User=$APP_USER
-Group=$APP_USER
-WorkingDirectory=$APP_BASE_DIR/current
-EnvironmentFile=$ENV_FILE
-ExecStart=/usr/bin/npm start
-Restart=always
-RestartSec=5
-KillSignal=SIGTERM
-TimeoutStopSec=20
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable "$SERVICE_NAME.service"
-systemctl restart "$SERVICE_NAME.service" || true
 
 systemctl enable nginx
 systemctl restart nginx
