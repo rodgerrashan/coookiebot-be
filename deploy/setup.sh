@@ -62,8 +62,10 @@ PORT=$APP_PORT
 # SMTP_USER=
 # SMTP_PASS=
 EOF
-	chmod 600 "$ENV_FILE"
 fi
+
+chown "$APP_USER:$APP_USER" "$ENV_FILE"
+chmod 600 "$ENV_FILE"
 
 systemctl enable nginx
 systemctl restart nginx

@@ -21,6 +21,17 @@ if ! id -u "$APP_USER" >/dev/null 2>&1; then
 	exit 1
 fi
 
+if [ ! -f "$ENV_FILE" ]; then
+	echo "[deploy] ENV_FILE not found: $ENV_FILE"
+	exit 1
+fi
+
+if ! runuser -u "$APP_USER" -- test -r "$ENV_FILE"; then
+	log "Adjusting $ENV_FILE permissions for user $APP_USER"
+	chown "$APP_USER:$APP_USER" "$ENV_FILE"
+	chmod 600 "$ENV_FILE"
+fi
+
 mkdir -p "$APP_BASE_DIR/releases" "$APP_BASE_DIR/shared"
 chown -R "$APP_USER:$APP_USER" "$APP_BASE_DIR"
 
