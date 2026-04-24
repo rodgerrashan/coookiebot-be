@@ -44,19 +44,21 @@ tar -xzf "$SOURCE_TARBALL" -C "$RELEASE_DIR"
 chown -R "$APP_USER:$APP_USER" "$RELEASE_DIR"
 
 APP_DIR=""
-if [ -f "$RELEASE_DIR/package.json" ]; then
+if [ -f "$RELEASE_DIR/package.json" ] && [ -f "$RELEASE_DIR/server.js" ]; then
 	APP_DIR="$RELEASE_DIR"
-elif [ -f "$RELEASE_DIR/coookiebot-be/package.json" ]; then
+elif [ -f "$RELEASE_DIR/coookiebot-be/package.json" ] && [ -f "$RELEASE_DIR/coookiebot-be/server.js" ]; then
 	APP_DIR="$RELEASE_DIR/coookiebot-be"
 else
-	FOUND_PACKAGE_JSON="$(find "$RELEASE_DIR" -maxdepth 4 -name package.json | head -n 1 || true)"
-	if [ -n "$FOUND_PACKAGE_JSON" ]; then
-		APP_DIR="$(dirname "$FOUND_PACKAGE_JSON")"
+	FOUND_SERVER_JS="$(find "$RELEASE_DIR" -maxdepth 5 -type f -name server.js | head -n 1 || true)"
+	if [ -n "$FOUND_SERVER_JS" ]; then
+		APP_DIR="$(dirname "$FOUND_SERVER_JS")"
 	fi
 fi
 
-if [ -z "$APP_DIR" ] || [ ! -f "$APP_DIR/package.json" ]; then
-	echo "[deploy] package.json not found in release: $RELEASE_DIR"
+if [ -z "$APP_DIR" ] || [ ! -f "$APP_DIR/package.json" ] || [ ! -f "$APP_DIR/server.js" ]; then
+	echo "[deploy] Could not locate backend app directory (missing package.json/server.js) in: $RELEASE_DIR"
+	echo "[deploy] Top-level release contents:"
+	ls -la "$RELEASE_DIR" || true
 	exit 1
 fi
 
