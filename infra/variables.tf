@@ -25,7 +25,7 @@ variable "instance_name" {
 variable "bundle_id" {
   description = "Lightsail instance size; nano_3_1 is the selected low-cost Ubuntu option"
   type        = string
-  default     = "nano_3_1"
+  default     = "micro_3_1"
 }
 
 variable "key_pair_name" {
