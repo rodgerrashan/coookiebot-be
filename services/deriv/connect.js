@@ -1,5 +1,6 @@
 // utils/deriv/connectDeriv.js
 const WebSocket = require("ws");
+const DerivAPIBasic = require("@deriv/deriv-api/dist/DerivAPIBasic");
 const logger = require("../../utils/logger");
 const { decrypt } = require("../../utils/encryptions");
 require("dotenv").config();
@@ -13,6 +14,78 @@ const HEARTBEAT_TIMEOUT = 10_000;   // 30 seconds
 
 const MAX_RETRIES = 5;
 const RETRY_DELAY = 5000;
+
+const createConnection = (socketId) => {
+  const wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${process.env.DERIV_APP_ID}`;
+  const ws = new WebSocket(wsUrl);
+  const api = new DerivAPIBasic({ connection: ws });
+
+  ws.isAuthorized = false;
+  ws.loginid = null;
+  ws.authorizeData = null;
+  ws.socketId = socketId;
+
+  return { ws, api };
+};
+
+const normalizeToken = (token) => {
+  if (typeof token !== "string") {
+    throw new Error("Invalid Deriv token");
+  }
+
+  const trimmed = token.trim();
+  if (!trimmed.includes(":")) {
+    return trimmed;
+  }
+
+  try {
+    const decrypted = decrypt(trimmed);
+    const looksPlauible = /^[A-Za-z0-9._~-]+$/.test(decrypted) && decrypted.length >= 10;
+
+    if (!looksPlauible) {
+      logger.warn("[Deriv] Decrypted token did not look valid; using stored token value");
+      return trimmed;
+    }
+
+    return decrypted;
+  } catch (err) {
+    return trimmed;
+  }
+};
+
+const waitForOpen = (ws, socketId, timeoutMs = CONNECT_TIMEOUT) => {
+  return new Promise((resolve, reject) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      return resolve();
+    }
+
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      ws.off("open", onOpen);
+      ws.off("error", onError);
+    };
+
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+
+    const onError = (err) => {
+      cleanup();
+      reject(err);
+    };
+
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      ws.terminate();
+      logger.error(`[Deriv:${socketId}] Connection timeout`);
+      reject(new Error("Connection timeout"));
+    }, timeoutMs);
+
+    ws.once("open", onOpen);
+    ws.once("error", onError);
+  });
+};
 
 
 const connectDeriv = (token, socketId = `deriv-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`) => {
@@ -40,18 +113,12 @@ const connectDeriv = (token, socketId = `deriv-${Date.now()}-${Math.random().toS
 
     let decryptedToken;
     try {
-      decryptedToken = decrypt(token);
+      decryptedToken = normalizeToken(token);
     } catch (err) {
       return reject(new Error("Failed to decrypt token"));
     }
 
-    const wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${process.env.DERIV_APP_ID}`;
-    const ws = new WebSocket(wsUrl);
-
-    ws.isAuthorized = false;
-    ws.loginid = null;
-    ws.authorizeData = null;
-    ws.socketId = socketId;
+    const { ws, api } = createConnection(socketId);
 
     sockets.set(socketId, ws);
 
@@ -76,18 +143,21 @@ const connectDeriv = (token, socketId = `deriv-${Date.now()}-${Math.random().toS
     const handleAuthorize = (data) => {
       if (settled) return;
 
-      if (data.error) {
+      const error = data?.error || data?.authorize?.error;
+      const authorizeData = data?.authorize || data;
+
+      if (error) {
         cleanup();
         sockets.delete(socketId);
-        logger.error(`[Deriv:${socketId}] Auth failed: ${data.error.message}`);
-        reject(new Error(data.error.message));
+        logger.error(`[Deriv:${socketId}] Auth failed: ${error.message}`);
+        reject(new Error(error.message));
         return;
       }
 
-      if (data.msg_type === "authorize") {
+      if (data?.msg_type === "authorize" || authorizeData?.loginid) {
         ws.isAuthorized = true;
-        ws.loginid = data.authorize.loginid;
-        ws.authorizeData = data.authorize;
+        ws.loginid = authorizeData.loginid;
+        ws.authorizeData = authorizeData;
 
         cleanup();
         logger.info(`[Deriv:${socketId}] Authorized → ${ws.loginid}`);
@@ -101,9 +171,19 @@ const connectDeriv = (token, socketId = `deriv-${Date.now()}-${Math.random().toS
       }
     };
 
-    ws.on("open", () => {
+    ws.on("open", async () => {
       logger.info(`[Deriv:${socketId}] Connected, sending authorize...`);
-      ws.send(JSON.stringify({ authorize: decryptedToken }));
+
+      try {
+        const data = await api.authorize({ authorize: decryptedToken });
+        handleAuthorize(data);
+      } catch (err) {
+        if (settled) return;
+        cleanup();
+        sockets.delete(socketId);
+        logger.error(`[Deriv:${socketId}] Auth failed: ${err.message}`);
+        reject(err);
+      }
     });
 
     ws.on("message", (raw) => {
@@ -134,6 +214,59 @@ const connectDeriv = (token, socketId = `deriv-${Date.now()}-${Math.random().toS
       if (!ws.isAuthorized) {
         sockets.delete(socketId);
       }
+    });
+  });
+};
+
+const connectDerivPublic = (socketId = `deriv-public-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`) => {
+  return new Promise((resolve, reject) => {
+    const existing = sockets.get(socketId);
+    if (existing?.readyState === WebSocket.OPEN) {
+      return resolve({
+        socket: existing,
+        socketId,
+      });
+    }
+
+    if (existing) {
+      existing.terminate();
+      sockets.delete(socketId);
+    }
+
+    const { ws, api } = createConnection(socketId);
+    sockets.set(socketId, ws);
+
+    let settled = false;
+
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      ws.terminate();
+      sockets.delete(socketId);
+      reject(new Error("Connection timeout"));
+    }, CONNECT_TIMEOUT);
+
+    ws.once("open", () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve({
+        socket: ws,
+        api,
+        socketId,
+      });
+    });
+
+    ws.once("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      sockets.delete(socketId);
+      reject(err);
+    });
+
+    ws.once("close", () => {
+      sockets.delete(socketId);
     });
   });
 };
@@ -235,4 +368,4 @@ const connectDerivWithRetry = async (
 
 
 
-module.exports = { connectDeriv, closeDeriv, sockets, setupHeartbeat, connectDerivWithRetry };
+module.exports = { connectDeriv, connectDerivPublic, closeDeriv, sockets, setupHeartbeat, connectDerivWithRetry, waitForOpen };
