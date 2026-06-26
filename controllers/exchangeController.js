@@ -96,7 +96,7 @@ exports.createExchange = async (req, res) => {
         const encryptedSecret = isBinance ? encrypt(apiSecret) : null;
 
         await provider.validateCredentials({
-            apiToken: encryptedToken,
+            apiToken: isDeriv ? apiSecret : encryptedToken,
             apiKey: encryptedKey,
             apiSecret: encryptedSecret,
             isTestnet: Boolean(isTestnet),
@@ -282,7 +282,7 @@ exports.updateExchange = async (req, res) => {
 
         const provider = getExchangeProvider(exchange.platform);
         await provider.validateCredentials({
-            apiToken: exchange.apiToken,
+            apiToken: isDeriv && apiSecret ? apiSecret : exchange.apiToken,
             apiKey: exchange.apiKey,
             apiSecret: exchange.apiSecret,
             isTestnet: exchange.isTestnet,

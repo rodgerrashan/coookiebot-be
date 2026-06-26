@@ -9,6 +9,7 @@ const institutionalReversalTrap = require('./institutionalReversalTrap');
 const utBotPattern = require('./utBotPattern');
 const trendStrategy = require('./trendStrategy');
 const meanReversion = require('./meanReversion');
+const heikinAshiEmaStrategy = require('./heikinAshiEmaStrategy');
 const logger = require('../../utils/logger');
 
 
@@ -52,6 +53,9 @@ function runPattern(patternName, candles, options = {}) {
       break;
     case 'HMMR':
       result = hammer(candles, options);
+      break;
+    case 'HA_EMA_REENTRY':
+      result = heikinAshiEmaStrategy(candles, options);
       break;
     case 'BRSHENG':
       result = bearishEngulfing(candles, options);
