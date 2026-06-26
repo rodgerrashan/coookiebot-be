@@ -15,6 +15,11 @@
     "value": "HMMR"
   },
   {
+    "name": "Heikin Ashi EMA Reentry",
+    "file": "heikinAshiEmaStrategy",
+    "value": "HA_EMA_REENTRY"
+  },
+  {
     "name": "Shooting Star",
     "file": "shootingStar",
     "value": "SHTNGSTR"

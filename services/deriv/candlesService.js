@@ -1,7 +1,7 @@
 // services/deriv/candlesService.js
-const { connectDeriv, setupHeartbeat, connectDerivWithRetry } = require('./connect');
+const { connectDeriv, connectDerivPublic, setupHeartbeat, connectDerivWithRetry } = require('./connect');
 const logger = require('../../utils/logger');
-const { encrypt, decrypt } = require('../../utils/encryptions');
+const { encrypt } = require('../../utils/encryptions');
 require('dotenv').config();
 
 // get .env values
@@ -44,7 +44,7 @@ const subscribeCandles = async (symbol, granularity, token, botid, onCandle) => 
         subscribe: 1
       })
 
-      let ws = await connectDerivWithRetry(token);
+      let ws = await connectDerivPublic();
 
       setupHeartbeat(ws.socket, ws.socketId);
 
@@ -157,52 +157,30 @@ const unsubscribeCandles = (ws) => {
 const getSymbolsDeriv = async () => {
   return new Promise(async (resolve, reject) => {
     try {
-      const ws = await connectDeriv(process.env.READONLY_TOKEN);
+      const session = await connectDerivPublic();
 
-      ws.socket.send(JSON.stringify({ active_symbols: "brief" }));
+      try {
+        const data = await session.api.send({ active_symbols: "brief" });
 
-      ws.socket.onmessage = (event) => {
-        let data;
-        try {
-          data = JSON.parse(event.data);
-        } catch (e) {
-          return reject("Invalid JSON received from WebSocket");
+        if (!Array.isArray(data?.active_symbols)) {
+          session.socket.close();
+          return reject("active_symbols response missing array");
         }
 
-        // Log unexpected messages
-        if (!data.msg_type) {
-          console.log("[WS] Unknown message:", data);
-        }
+        const symbols = data.active_symbols.map((s) => ({
+          symbol: s.symbol,
+          display_name: s.display_name,
+          market: s.market,
+          submarket: s.submarket,
+          pip: s.pip,
+        }));
 
-        if (data.error) {
-          ws.socket.close();
-          return reject(data.error.message);
-        }
-
-        // We only care about active_symbols
-        if (data.msg_type === "active_symbols") {
-          if (!Array.isArray(data.active_symbols)) {
-            ws.socket.close();
-            return reject("active_symbols response missing array");
-          }
-
-          const symbols = data.active_symbols.map((s) => ({
-            symbol: s.symbol,
-            display_name: s.display_name,
-            market: s.market,
-            submarket: s.submarket,
-            pip: s.pip,
-          }));
-
-          ws.socket.close();
-          return resolve(symbols);
-        }
-      };
-
-      ws.socket.onerror = (err) => {
-        ws.socket.close();
-        reject(`WebSocket Error: ${err.message}`);
-      };
+        session.socket.close();
+        return resolve(symbols);
+      } catch (error) {
+        session.socket.close();
+        return reject(error?.message || error);
+      }
     } catch (err) {
       reject(err.message);
     }
@@ -213,47 +191,34 @@ const getSymbolsDeriv = async () => {
 
 const getMultipliersDeriv = async (symbol) => {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${process.env.DERIV_APP_ID}`);
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ authorize: decrypt(process.env.READONLY_TOKEN) }));
-    };
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-
-      if (data.msg_type === "authorize") {
-        ws.send(JSON.stringify({
+    connectDerivPublic()
+      .then((ws) => {
+        ws.api.send({
           contracts_for: symbol,
           currency: "USD",
           product_type: "basic",
           landing_company: "svg",
-        }));
-        return;
-      }
+        })
+          .then((data) => {
+            const multipliers = [];
+            const available = data.contracts_for?.available || [];
 
-      if (data.msg_type === "contracts_for") {
-        const multipliers = [];
-        const available = data.contracts_for?.available || [];
+            available
+              .filter(c => c.contract_category === "multiplier")
+              .forEach(c => c.multiplier_range?.forEach(m => multipliers.push(m)));
 
-        available
-          .filter(c => c.contract_category === "multiplier")
-          .forEach(c => c.multiplier_range?.forEach(m => multipliers.push(m)));
+            resolve({
+              multipliers: [...new Set(multipliers)].sort((a, b) => a - b),
+            });
 
-        resolve({
-          multipliers: [...new Set(multipliers)].sort((a, b) => a - b),
-        });
-
-        ws.close();
-      }
-
-      if (data.error) {
-        reject(data.error.message);
-        ws.close();
-      }
-    };
-
-    ws.onerror = (err) => reject(err.message);
+            ws.socket.close();
+          })
+          .catch((err) => {
+            ws.socket.close();
+            reject(err.message || err);
+          });
+      })
+      .catch((err) => reject(err.message || err));
   });
 };
 
@@ -262,8 +227,7 @@ const getMultipliersDeriv = async (symbol) => {
 const getCandleHistory = async (symbol, granularity = 60, startDate, endDate) => {
   return new Promise(async (resolve, reject) => {
     try {
-      // connect to Deriv websocket using readonly token
-      const ws = await connectDeriv(process.env.READONLY_TOKEN);
+      const ws = await connectDerivPublic();
 
       // Deriv candle history request
       const req = {
